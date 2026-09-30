@@ -3,7 +3,7 @@ const express = require('express')
 const app = express()
 
 // ESTE ES EL NUMERO QUE SERA EL BOT 24/7 - CON EL 1 DE MEXICO ES COMO WHATSAPP LO TIENE GUARDADO
-const TU_NUMERO_BOT = "5212295191113"
+const TU_NUMERO_BOT = "522295191113"
 const ADMINS = ["5359494299"]
 let currentCode = "Iniciando CHRONOS... espera 10 segundos"
 let estado = "Iniciando..."
