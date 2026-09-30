@@ -12,19 +12,12 @@ import { env } from '../config/env.js'
 import { logger } from '../utils/logger.js'
 import { whatsappPublicState } from './state.js'
 import { registerWhatsAppEvents } from './whatsapp.events.js'
-import { SystemState } from '../system/system-state.model.js'
 
 let activeSocket: WASocket | null = null
 let connectedSocket: WASocket | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
 let stopping = false
 
-/**
- * IMPORTANT:
- * Only expose the socket to the rest of CHRONOS after WhatsApp reports
- * connection === 'open'. Pairing/registration uses activeSocket internally,
- * but background workers must not issue group/message queries during registration.
- */
 export function getWhatsAppSocket() {
   return connectedSocket
 }
@@ -36,7 +29,7 @@ export function requireWhatsAppSocket() {
   return connectedSocket
 }
 
-async function exists(filePath: string) {
+async function fileExists(filePath: string) {
   try {
     await fs.access(filePath)
     return true
@@ -45,11 +38,16 @@ async function exists(filePath: string) {
   }
 }
 
-async function clearSession() {
-  await fs.rm(path.resolve(env.SESSION_DIR), { recursive: true, force: true })
+async function clearInvalidSession() {
+  try {
+    await fs.rm(path.resolve(env.SESSION_DIR), { recursive: true, force: true })
+    logger.warn('Sesión inválida eliminada. Se solicitará un nuevo código.')
+  } catch (error) {
+    logger.error({ err: error }, 'No se pudo limpiar la sesión inválida')
+  }
 }
 
-function disconnectCode(lastDisconnect: any) {
+function getDisconnectCode(lastDisconnect: any) {
   return (
     lastDisconnect?.error?.output?.statusCode ||
     lastDisconnect?.error?.statusCode ||
@@ -58,17 +56,24 @@ function disconnectCode(lastDisconnect: any) {
   )
 }
 
-function scheduleReconnect(ms = 4000) {
+function scheduleReconnect(delayMs = 3000) {
   if (stopping || reconnectTimer) return
+
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
     startWhatsApp().catch((error) => {
-      logger.error({ err: error }, 'WhatsApp restart failed')
+      logger.error({ err: error }, 'Error reiniciando CHRONOS')
+      whatsappPublicState.status = 'RECONNECTING'
       scheduleReconnect(5000)
     })
-  }, ms)
+  }, delayMs)
 }
 
+/**
+ * WhatsApp connection engine intentionally mirrors the exact registration flow
+ * from Chronos-bot-pairing-fix-v2, the build that paired successfully on Railway.
+ * Do not add database/scheduler work to the registration callbacks.
+ */
 export async function startWhatsApp() {
   if (!env.WHATSAPP_ENABLED) {
     whatsappPublicState.status = 'DISABLED'
@@ -78,41 +83,38 @@ export async function startWhatsApp() {
 
   stopping = false
   whatsappPublicState.number = env.WHATSAPP_NUMBER
+  whatsappPublicState.status = 'STARTING'
   whatsappPublicState.pairingCode = null
 
-  // Keep the same pairing strategy that was proven to work in Chronos-bot-pairing-fix-v2.
-  // Baileys 6.7.24 types require an argument, but an empty options object is runtime-equivalent
-  // to the previously working no-argument call.
-  let versionInfo =
-    typeof fetchLatestWaWebVersion === 'function'
-      ? await fetchLatestWaWebVersion({})
-      : undefined
+  // Keep the invocation semantics of the known-good v2 build: no argument.
+  let versionInfo: any
+  if (typeof fetchLatestWaWebVersion === 'function') {
+    versionInfo = await (fetchLatestWaWebVersion as unknown as () => Promise<any>)()
+  }
 
   if (!versionInfo?.isLatest) {
-    logger.warn('Could not resolve live WhatsApp Web version; using Baileys fallback')
+    logger.warn('No se pudo obtener WA Web live; usando fallback de Baileys.')
     versionInfo = await fetchLatestBaileysVersion()
   }
 
-  logger.info(
-    `Starting WhatsApp registration with version ${versionInfo.version.join('.')} for ${env.WHATSAPP_NUMBER}`,
-  )
+  const { version, isLatest } = versionInfo
+  logger.info(`WhatsApp Web version: ${version.join('.')} | latest=${String(isLatest)}`)
 
   const sessionDir = path.resolve(env.SESSION_DIR)
-  const hadSession = await exists(path.join(sessionDir, 'creds.json'))
+  const hadStoredCreds = await fileExists(path.join(sessionDir, 'creds.json'))
   let authBundle = await useMultiFileAuthState(sessionDir)
 
-  if (hadSession && !authBundle.state.creds.registered) {
-    logger.warn('Partial WhatsApp session found; clearing it before pairing')
-    await clearSession()
+  if (hadStoredCreds && !authBundle.state.creds.registered) {
+    logger.warn('Detectada sesión parcial no registrada. Limpiando antes de vincular...')
+    await clearInvalidSession()
     authBundle = await useMultiFileAuthState(sessionDir)
   }
 
   const { state, saveCreds } = authBundle
   let pairingRequested = false
-  let operationalEventsRegistered = false
 
-  const socket = makeWASocket({
-    version: versionInfo.version,
+  const sock = makeWASocket({
+    version,
     auth: state,
     browser: Browsers.macOS('Chrome'),
     printQRInTerminal: false,
@@ -122,125 +124,82 @@ export async function startWhatsApp() {
     syncFullHistory: false,
   })
 
-  activeSocket = socket
+  activeSocket = sock
   connectedSocket = null
-  socket.ev.on('creds.update', saveCreds)
+  sock.ev.on('creds.update', saveCreds)
 
-  socket.ev.on('connection.update', async (update: any) => {
-    if (activeSocket !== socket) return
+  // The known-good build attached its operational listeners immediately after
+  // creating the socket. Keep that ordering. They cannot process normal traffic
+  // until WhatsApp is connected.
+  registerWhatsAppEvents(sock)
+
+  sock.ev.on('connection.update', async (update: any) => {
+    if (activeSocket !== sock) return
 
     const { connection, lastDisconnect, qr } = update
 
-    // Request exactly one phone-number pairing code per registration socket,
-    // and only after Baileys has received the QR event (registration channel ready).
     if (!state.creds.registered && !pairingRequested && Boolean(qr)) {
       pairingRequested = true
       whatsappPublicState.status = 'PAIRING'
       whatsappPublicState.pairingCode = null
 
       try {
-        const code = await socket.requestPairingCode(env.WHATSAPP_NUMBER)
+        logger.info(`Pidiendo código para: ${env.WHATSAPP_NUMBER}`)
+        const code = await sock.requestPairingCode(env.WHATSAPP_NUMBER)
         whatsappPublicState.pairingCode = code
-        // Keep the code in the text message too: Railway's compact log view can hide structured fields.
-        logger.info(`WhatsApp pairing code generated: ${code}`)
+        logger.info(`CÓDIGO WHATSAPP: ${code}`)
       } catch (error: any) {
         pairingRequested = false
+        const statusCode = error?.output?.statusCode || error?.statusCode || 'sin código'
+        logger.error({ err: error }, `Error solicitando pairing code: ${statusCode}`)
         whatsappPublicState.pairingCode = null
-        const statusCode =
-          error?.output?.statusCode || error?.statusCode || error?.data?.statusCode || 'N/A'
-        logger.error({ err: error }, `Pairing code failed with status ${statusCode}`)
+        whatsappPublicState.status = 'DISCONNECTED'
       }
     }
 
     if (connection === 'open') {
-      connectedSocket = socket
+      connectedSocket = sock
       whatsappPublicState.status = 'CONNECTED'
       whatsappPublicState.pairingCode = null
-
-      // Do not register moderation/group handlers until registration is completely finished.
-      if (!operationalEventsRegistered) {
-        operationalEventsRegistered = true
-        registerWhatsAppEvents(socket)
-      }
-
-      await SystemState.findByIdAndUpdate(
-        'singleton',
-        {
-          $set: {
-            whatsappStatus: 'CONNECTED',
-            lastConnectedAt: new Date(),
-            updatedAt: new Date(),
-          },
-        },
-        { upsert: true },
-      )
-
-      logger.info('CHRONOS connected to WhatsApp')
+      logger.info('✅ CHRONOS conectado a WhatsApp')
       return
     }
 
     if (connection === 'close') {
-      if (connectedSocket === socket) connectedSocket = null
-      activeSocket = null
+      if (connectedSocket === sock) connectedSocket = null
 
-      // Never keep showing a code that belongs to a closed registration socket.
-      whatsappPublicState.pairingCode = null
-
-      const statusCode = disconnectCode(lastDisconnect)
-      const unregistered = !state.creds.registered
+      const statusCode = getDisconnectCode(lastDisconnect)
       const message = lastDisconnect?.error?.message || 'sin mensaje'
+      const noRegistrado = !state.creds.registered
 
-      await SystemState.findByIdAndUpdate(
-        'singleton',
-        {
-          $set: {
-            whatsappStatus: 'DISCONNECTED',
-            lastDisconnectedAt: new Date(),
-            updatedAt: new Date(),
-          },
-        },
-        { upsert: true },
-      )
-
-      logger.warn(
-        `WhatsApp connection closed. status=${statusCode ?? 'N/A'} registered=${String(
+      logger.error(
+        `WhatsApp cerró la conexión. status=${statusCode ?? 'N/A'} registered=${String(
           state.creds.registered,
         )} message=${message}`,
       )
 
       if (statusCode === 429) {
         whatsappPublicState.status = 'RATE_LIMITED'
+        whatsappPublicState.pairingCode = null
         return
       }
 
-      // 515 = restartRequired. After a successful pairing this is expected and the
-      // credentials must be preserved. If registration never completed, remove the
-      // partial state before trying a fresh code.
-      if (statusCode === DisconnectReason.restartRequired) {
-        if (state.creds.registered) {
-          whatsappPublicState.status = 'RECONNECTING'
-          scheduleReconnect(1500)
-          return
-        }
-
-        logger.warn('RestartRequired received before registration completed; clearing partial pairing state')
-        await clearSession()
-        whatsappPublicState.status = 'PAIRING'
-        scheduleReconnect(4000)
-        return
-      }
-
+      // Exact known-good v2 behavior: only clear on loggedOut or the specific
+      // unregistered registration failures below. In particular, do NOT clear
+      // credentials on 515 here; the previous working build did not do that.
       if (
         statusCode === DisconnectReason.loggedOut ||
-        (unregistered && [405, 408, 428].includes(Number(statusCode)))
+        (noRegistrado && [405, 408, 428].includes(Number(statusCode)))
       ) {
-        await clearSession()
         whatsappPublicState.status = 'PAIRING'
+        whatsappPublicState.pairingCode = null
+        await clearInvalidSession()
       } else {
         whatsappPublicState.status = 'RECONNECTING'
+        whatsappPublicState.pairingCode = null
       }
 
-      scheduleReconnect()
+      scheduleReconnect(4000)
     }
   })
 }
