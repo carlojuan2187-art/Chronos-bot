@@ -24,6 +24,7 @@ const schema = z.object({
   PAIRING_PAGE_TOKEN: z.string().default(''),
   LOG_LEVEL: z.string().default('info'),
   WHATSAPP_ENABLED: boolFromEnv.default(true),
+  WHATSAPP_PAIRING_MODE: z.enum(['code','qr']).default('code'),
   GROUP_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
   SCHEDULER_POLL_SECONDS: z.coerce.number().int().positive().default(15),
 })
