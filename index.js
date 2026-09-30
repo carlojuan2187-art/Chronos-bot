@@ -5,6 +5,7 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
+    fetchLatestWaWebVersion,
     Browsers,
 } = require('@whiskeysockets/baileys')
 const express = require('express')
@@ -70,21 +71,53 @@ async function clearInvalidSession() {
     }
 }
 
+async function fileExists(filePath) {
+    try {
+        await fs.access(filePath)
+        return true
+    } catch {
+        return false
+    }
+}
+
 async function startBot() {
     validateConfig()
 
-    const { version, isLatest } = await fetchLatestBaileysVersion()
-    console.log(`Baileys/WA version: ${version.join('.')} | latest=${isLatest}`)
+    // WhatsApp cambia el client_revision con frecuencia. Para vincular un dispositivo
+    // nuevo usamos la versión LIVE de WhatsApp Web; fetchLatestBaileysVersion() puede
+    // quedar atrasada y generar códigos que el teléfono luego rechaza.
+    let versionInfo
+    if (typeof fetchLatestWaWebVersion === 'function') {
+        versionInfo = await fetchLatestWaWebVersion()
+    }
 
-    const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR)
+    if (!versionInfo?.isLatest) {
+        console.warn('No se pudo obtener WA Web live; usando fallback de Baileys.')
+        versionInfo = await fetchLatestBaileysVersion()
+    }
+
+    const { version, isLatest } = versionInfo
+    console.log(`WhatsApp Web version: ${version.join('.')} | latest=${isLatest}`)
+
+    // Si quedó un creds.json de un intento fallido anterior, no lo reutilizamos.
+    // Conservamos intacta una sesión ya registrada.
+    const hadStoredCreds = await fileExists(path.join(SESSION_DIR, 'creds.json'))
+    let authBundle = await useMultiFileAuthState(SESSION_DIR)
+    if (hadStoredCreds && !authBundle.state.creds.registered) {
+        console.log('Detectada sesión parcial no registrada. Limpiando antes de vincular...')
+        await clearInvalidSession()
+        authBundle = await useMultiFileAuthState(SESSION_DIR)
+    }
+
+    const { state, saveCreds } = authBundle
     let pairingRequested = false
 
     const sock = makeWASocket({
         version,
         auth: state,
-        // IMPORTANTE: usar un navegador canónico. Los labels personalizados pueden
-        // producir códigos que se muestran pero WhatsApp rechaza al vincular.
-        browser: Browsers.macOS('Desktop'),
+        // CRÍTICO (2026): WhatsApp rechaza el sub-platform DARWIN/WIN32 que
+        // Baileys anuncia con 'Desktop' y cierra con 428. Chrome usa WEB_BROWSER.
+        browser: Browsers.macOS('Chrome'),
         printQRInTerminal: false,
         connectTimeoutMs: 60_000,
         defaultQueryTimeoutMs: 60_000,
@@ -100,12 +133,13 @@ async function startBot() {
 
         const { connection, lastDisconnect, qr } = update
 
-        // El pairing code se pide cuando el socket YA está intentando conectar,
-        // no mediante un timer arbitrario que puede dispararse sobre un socket cerrado.
+        // Pedimos el pairing code solo cuando Baileys ya recibió un QR. Ese evento
+        // confirma que el canal de registro con WhatsApp está abierto y evita 428 por
+        // solicitar el código antes de que el socket esté listo.
         if (
             !state.creds.registered &&
             !pairingRequested &&
-            (connection === 'connecting' || Boolean(qr))
+            Boolean(qr)
         ) {
             pairingRequested = true
             estado = `Generando código para ${TU_NUMERO_BOT}...`
@@ -138,15 +172,25 @@ async function startBot() {
 
             console.error(`WhatsApp cerró la conexión. status=${statusCode ?? 'N/A'} message=${message}`)
 
-            if (statusCode === DisconnectReason.loggedOut) {
-                estado = '⚠️ Sesión cerrada. Generando nueva vinculación...'
-                currentCode = 'NUEVO CÓDIGO EN BREVE'
+            const noRegistrado = !state.creds.registered
+
+            if (statusCode === 429) {
+                // No insistir automáticamente: repetir solicitudes durante un rate-limit
+                // alarga el bloqueo y todos los códigos nuevos serán rechazados.
+                estado = '⏳ WhatsApp limitó temporalmente las vinculaciones (429)'
+                currentCode = 'ESPERA 30 MIN Y REINICIA EL SERVICIO'
+                return
+            }
+
+            if (statusCode === DisconnectReason.loggedOut || (noRegistrado && [405, 408, 428].includes(statusCode))) {
+                estado = `⚠️ Vinculación reiniciada (${statusCode ?? 'sin código'})`
+                currentCode = 'GENERANDO CÓDIGO NUEVO...'
                 await clearInvalidSession()
             } else {
                 estado = `Reconectando... (${statusCode ?? 'sin código'})`
             }
 
-            scheduleReconnect()
+            scheduleReconnect(4000)
         }
     })
 
