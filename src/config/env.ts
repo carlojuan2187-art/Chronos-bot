@@ -21,6 +21,7 @@ const schema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   ADMIN_SECURITY_ENCRYPTION_KEY: z.string().regex(/^[a-fA-F0-9]{64}$/),
   CORS_ORIGINS: z.string().default(''),
+  PAIRING_PAGE_TOKEN: z.string().default(''),
   LOG_LEVEL: z.string().default('info'),
   WHATSAPP_ENABLED: boolFromEnv.default(true),
   GROUP_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
