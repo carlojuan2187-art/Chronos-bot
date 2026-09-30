@@ -16,7 +16,7 @@ const pairingEngine = require('../../pairing-engine.cjs') as {
 
 let connectedSocket: WASocket | null = null
 let stopping = false
-let operationalListenersRegistered = false
+let listenersSocket: WASocket | null = null
 const lifecycle = new EventEmitter()
 
 export function getWhatsAppSocket() {
@@ -51,7 +51,7 @@ export async function startWhatsApp() {
   }
 
   stopping = false
-  operationalListenersRegistered = false
+  listenersSocket = null
   mergePublicState({
     status: 'STARTING',
     number: env.WHATSAPP_NUMBER,
@@ -72,9 +72,10 @@ export async function startWhatsApp() {
     onConnected: async (sock: WASocket) => {
       if (stopping) return
       connectedSocket = sock
-      if (!operationalListenersRegistered) {
+      if (listenersSocket !== sock) {
         registerWhatsAppEvents(sock)
-        operationalListenersRegistered = true
+        listenersSocket = sock
+        logger.info({ user: (sock as any).user?.id || null }, 'WhatsApp command/moderation listeners registered')
       }
       lifecycle.emit('connected')
     },
@@ -83,7 +84,7 @@ export async function startWhatsApp() {
 
 export async function resetWhatsAppPairing() {
   connectedSocket = null
-  operationalListenersRegistered = false
+  listenersSocket = null
   mergePublicState({ status: 'STARTING', pairingCode: null, qr: null })
   await pairingEngine.resetSessionAndReconnect()
 }
@@ -92,7 +93,7 @@ export async function stopWhatsApp() {
   stopping = true
   await pairingEngine.stop()
   connectedSocket = null
-  operationalListenersRegistered = false
+  listenersSocket = null
   mergePublicState({ status: 'DISCONNECTED', pairingCode: null, qr: null })
 }
 
