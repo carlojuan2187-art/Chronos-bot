@@ -7,13 +7,42 @@ import { warn, kick } from './moderation.service.js'
 import { hasBypass } from './whitelist.service.js'
 import { detectSpam } from './anti-spam.service.js'
 import { matchBlockedTerm } from './blocked-content.service.js'
-import { phoneCandidatesFromMessageKey } from '../utils/jid.js'
+import { phoneCandidatesFromMessageKey, phoneFromJid } from '../utils/jid.js'
 import { findAdminByPhone } from '../auth/auth.service.js'
 
 function extractText(msg:WAMessage){const m:any=msg.message||{};return String(m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||'')}
-export async function moderateMessage(sock:WASocket,msg:WAMessage){ const groupJid=msg.key.remoteJid;if(!groupJid?.endsWith('@g.us'))return;const participant=msg.key.participant;if(!participant)return;const group=await Group.findOne({groupJid});if(!group)return;const member=await upsertMember(participant,(msg as any).pushName);const text=extractText(msg);const admin=phoneCandidatesFromMessageKey(msg.key).map(findAdminByPhone).find(Boolean);if(admin)return
+export async function moderateMessage(sock:WASocket,msg:WAMessage){
+  const groupJid=msg.key.remoteJid;if(!groupJid?.endsWith('@g.us'))return
+  const participant=msg.key.participant;if(!participant)return
+  const group=await Group.findOne({groupJid});if(!group)return
+  const member=await upsertMember(participant,(msg as any).pushName,[String((msg.key as any).participantPn||''),(msg.key as any).participantLid].filter(Boolean))
+  const text=extractText(msg)
+  const admin=phoneCandidatesFromMessageKey(msg.key).map(findAdminByPhone).find(Boolean);if(admin)return
+  const mention=participant
+  const label=(msg as any).pushName||member.phoneNumberNormalized||phoneFromJid(participant)||'usuario'
   const deleteMsg=async()=>{try{await sock.sendMessage(groupJid,{delete:msg.key})}catch{}}
-  if(detectsBlockedLink(text,(group as any).antiLink)&&!(await hasBypass(member._id,group,'antiLink'))){await deleteMsg();const active=await activeWarnings(member._id,group._id,'LINK');if(active.length>=1){await kick(group,member,'Segunda infracción anti-link','AUTOMATIC','CHRONOS');return}const days=Number((group as any).antiLink?.warningExpiresInDays||30);await warn(group,member,'LINK','Enlace/promoción no permitida','AUTOMATIC','CHRONOS',new Date(Date.now()+days*86400000));await sock.sendMessage(groupJid,{text:`⚠️ @${phone}, los enlaces o promociones no están permitidos. Esta es tu primera advertencia.`,mentions:[participant]});return}
-  const m:any=msg.message||{};const media=Boolean(m.imageMessage||m.videoMessage||m.stickerMessage||m.documentMessage);const mentions=(m.extendedTextMessage?.contextInfo?.mentionedJid||[]).length;const spam=detectSpam(`${groupJid}:${participant}`,text,media,mentions,(group as any).antiSpam);if(spam&&!(await hasBypass(member._id,group,'antiSpam'))){await deleteMsg();const active=await activeWarnings(member._id,group._id,'SPAM');const hrs=Number((group as any).antiSpam?.warningExpiresHours||24);if(active.length>=2){await kick(group,member,'Spam/flood reiterado','AUTOMATIC','CHRONOS');return}await warn(group,member,'SPAM',`Anti-spam: ${spam}`,'AUTOMATIC','CHRONOS',new Date(Date.now()+hrs*3600000));await sock.sendMessage(groupJid,{text:`⚠️ @${phone}, evita el spam/flood. Advertencia ${active.length+1}/3.`,mentions:[participant]});return}
-  const blocked=matchBlockedTerm(text,(group as any).blockedTerms);if(blocked&&!(await hasBypass(member._id,group,'blockedContent'))){if(['DELETE','WARN','KICK'].includes(blocked.action))await deleteMsg();if(blocked.action==='WARN')await warn(group,member,'BLOCKED_CONTENT','Contenido no permitido','AUTOMATIC','CHRONOS',new Date(Date.now()+30*86400000));if(blocked.action==='KICK')await kick(group,member,'Contenido no permitido','AUTOMATIC','CHRONOS')}
+
+  if(detectsBlockedLink(text,(group as any).antiLink)&&!(await hasBypass(member._id,group,'antiLink'))){
+    await deleteMsg();const active=await activeWarnings(member._id,group._id,'LINK')
+    if(active.length>=1){await kick(group,member,'Segunda infracción anti-link','AUTOMATIC','CHRONOS');return}
+    const days=Number((group as any).antiLink?.warningExpiresInDays||30)
+    await warn(group,member,'LINK','Enlace/promoción no permitida','AUTOMATIC','CHRONOS',new Date(Date.now()+days*86400000))
+    await sock.sendMessage(groupJid,{text:`⚠️ ${label}, los enlaces o promociones no están permitidos. Esta es tu primera advertencia.`,mentions:[mention]});return
+  }
+
+  const m:any=msg.message||{};const media=Boolean(m.imageMessage||m.videoMessage||m.stickerMessage||m.documentMessage);const mentions=(m.extendedTextMessage?.contextInfo?.mentionedJid||[]).length
+  const spam=detectSpam(`${groupJid}:${participant}`,text,media,mentions,(group as any).antiSpam)
+  if(spam&&!(await hasBypass(member._id,group,'antiSpam'))){
+    await deleteMsg();const active=await activeWarnings(member._id,group._id,'SPAM');const hrs=Number((group as any).antiSpam?.warningExpiresHours||24)
+    if(active.length>=2){await kick(group,member,'Spam/flood reiterado','AUTOMATIC','CHRONOS');return}
+    await warn(group,member,'SPAM',`Anti-spam: ${spam}`,'AUTOMATIC','CHRONOS',new Date(Date.now()+hrs*3600000))
+    await sock.sendMessage(groupJid,{text:`⚠️ ${label}, evita el spam/flood. Advertencia ${active.length+1}/3.`,mentions:[mention]});return
+  }
+
+  const blocked=matchBlockedTerm(text,(group as any).blockedTerms)
+  if(blocked&&!(await hasBypass(member._id,group,'blockedContent'))){
+    if(['DELETE','WARN','KICK'].includes(blocked.action))await deleteMsg()
+    if(blocked.action==='WARN')await warn(group,member,'BLOCKED_CONTENT','Contenido no permitido','AUTOMATIC','CHRONOS',new Date(Date.now()+30*86400000))
+    if(blocked.action==='KICK')await kick(group,member,'Contenido no permitido','AUTOMATIC','CHRONOS')
+  }
 }
