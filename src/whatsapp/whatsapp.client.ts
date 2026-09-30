@@ -20,7 +20,7 @@ function scheduleReconnect(ms=4000){if(stopping||reconnectTimer)return; reconnec
 export async function startWhatsApp(){
   if(!env.WHATSAPP_ENABLED){whatsappPublicState.status='DISABLED';whatsappPublicState.number=env.WHATSAPP_NUMBER;return}
   stopping=false; whatsappPublicState.number=env.WHATSAPP_NUMBER
-  let info=typeof fetchLatestWaWebVersion==='function'?await fetchLatestWaWebVersion():undefined
+  let info=typeof fetchLatestWaWebVersion==='function'?await fetchLatestWaWebVersion({}):undefined
   if(!info?.isLatest) info=await fetchLatestBaileysVersion()
   const sessionDir=path.resolve(env.SESSION_DIR); const had=await exists(path.join(sessionDir,'creds.json')); let bundle=await useMultiFileAuthState(sessionDir)
   if(had&&!bundle.state.creds.registered){logger.warn('Partial WhatsApp session found; clearing it');await clearSession();bundle=await useMultiFileAuthState(sessionDir)}
