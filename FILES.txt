@@ -1,5 +1,6 @@
 .env.example
 .gitignore
+.nvmrc
 BUILD_FIXES_2.0.1.md
 BUILD_FIXES_2.0.2.md
 BUILD_FIXES_2.0.3.md
@@ -7,6 +8,8 @@ BUILD_FIXES_2.0.4.md
 BUILD_FIXES_2.0.5.md
 BUILD_FIXES_2.0.6.md
 BUILD_FIXES_2.0.7.md
+BUILD_FIXES_2.0.8.md
+FILES.txt
 IMPLEMENTATION_STATUS.md
 README.md
 package.json
