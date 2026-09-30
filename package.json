@@ -1,6 +1,6 @@
 {
   "name": "chronos-backend",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "create-indexes": "tsx scripts/create-indexes.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.24",
