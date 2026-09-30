@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import makeWASocket, {
   Browsers,
   DisconnectReason,
@@ -17,6 +18,10 @@ let activeSocket: WASocket | null = null
 let connectedSocket: WASocket | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
 let stopping = false
+let activeCredsRegistered: (() => boolean) | null = null
+let phonePairingRequested = false
+let operationalListenersRegistered = false
+const lifecycle = new EventEmitter()
 
 export function getWhatsAppSocket() {
   return connectedSocket
@@ -27,6 +32,11 @@ export function requireWhatsAppSocket() {
     throw new Error('WHATSAPP_DISCONNECTED')
   }
   return connectedSocket
+}
+
+export function onWhatsAppConnected(listener: () => void | Promise<void>) {
+  lifecycle.on('connected', listener)
+  return () => lifecycle.off('connected', listener)
 }
 
 async function fileExists(filePath: string) {
@@ -41,7 +51,7 @@ async function fileExists(filePath: string) {
 async function clearInvalidSession() {
   try {
     await fs.rm(path.resolve(env.SESSION_DIR), { recursive: true, force: true })
-    logger.warn('Sesión inválida eliminada. Se solicitará un nuevo código.')
+    logger.warn('Sesión inválida eliminada. Se solicitará una nueva vinculación.')
   } catch (error) {
     logger.error({ err: error }, 'No se pudo limpiar la sesión inválida')
   }
@@ -70,14 +80,20 @@ function scheduleReconnect(delayMs = 3000) {
 }
 
 /**
- * WhatsApp connection engine intentionally mirrors the exact registration flow
- * from Chronos-bot-pairing-fix-v2, the build that paired successfully on Railway.
- * Do not add database/scheduler work to the registration callbacks.
+ * Pairing engine based on the exact socket/auth/version/browser flow from
+ * Chronos-bot-pairing-fix-v2, the build that paired successfully on Railway.
+ *
+ * Important: we DO NOT call requestPairingCode automatically anymore. The QR
+ * emitted by Baileys remains untouched and is the primary pairing method.
+ * Phone-code pairing is requested only when the operator explicitly asks for it
+ * from the protected pairing page.
  */
 export async function startWhatsApp() {
   if (!env.WHATSAPP_ENABLED) {
     whatsappPublicState.status = 'DISABLED'
     whatsappPublicState.number = env.WHATSAPP_NUMBER
+    whatsappPublicState.qr = null
+    whatsappPublicState.pairingCode = null
     return
   }
 
@@ -85,8 +101,10 @@ export async function startWhatsApp() {
   whatsappPublicState.number = env.WHATSAPP_NUMBER
   whatsappPublicState.status = 'STARTING'
   whatsappPublicState.pairingCode = null
+  whatsappPublicState.qr = null
+  phonePairingRequested = false
+  operationalListenersRegistered = false
 
-  // Keep the invocation semantics of the known-good v2 build: no argument.
   let versionInfo: any
   if (typeof fetchLatestWaWebVersion === 'function') {
     versionInfo = await (fetchLatestWaWebVersion as unknown as () => Promise<any>)()
@@ -111,7 +129,7 @@ export async function startWhatsApp() {
   }
 
   const { state, saveCreds } = authBundle
-  let pairingRequested = false
+  activeCredsRegistered = () => Boolean(state.creds.registered)
 
   const sock = makeWASocket({
     version,
@@ -128,45 +146,46 @@ export async function startWhatsApp() {
   connectedSocket = null
   sock.ev.on('creds.update', saveCreds)
 
-  // The known-good build attached its operational listeners immediately after
-  // creating the socket. Keep that ordering. They cannot process normal traffic
-  // until WhatsApp is connected.
-  registerWhatsAppEvents(sock)
-
   sock.ev.on('connection.update', async (update: any) => {
     if (activeSocket !== sock) return
 
     const { connection, lastDisconnect, qr } = update
 
-    if (!state.creds.registered && !pairingRequested && Boolean(qr)) {
-      pairingRequested = true
+    // Preserve the QR exactly as Baileys gives it to us. Do not request a phone
+    // pairing code automatically because that changes the registration flow.
+    if (!state.creds.registered && typeof qr === 'string' && qr.length > 0) {
       whatsappPublicState.status = 'PAIRING'
+      whatsappPublicState.qr = qr
       whatsappPublicState.pairingCode = null
-
-      try {
-        logger.info(`Pidiendo código para: ${env.WHATSAPP_NUMBER}`)
-        const code = await sock.requestPairingCode(env.WHATSAPP_NUMBER)
-        whatsappPublicState.pairingCode = code
-        logger.info(`CÓDIGO WHATSAPP: ${code}`)
-      } catch (error: any) {
-        pairingRequested = false
-        const statusCode = error?.output?.statusCode || error?.statusCode || 'sin código'
-        logger.error({ err: error }, `Error solicitando pairing code: ${statusCode}`)
-        whatsappPublicState.pairingCode = null
-        whatsappPublicState.status = 'DISCONNECTED'
-      }
+      phonePairingRequested = false
+      logger.info('WhatsApp QR listo para vincular')
     }
 
     if (connection === 'open') {
       connectedSocket = sock
       whatsappPublicState.status = 'CONNECTED'
       whatsappPublicState.pairingCode = null
+      whatsappPublicState.qr = null
+      phonePairingRequested = false
+
+      // Only after WhatsApp confirms the session do we attach the heavy runtime
+      // listeners that touch MongoDB/moderation/sync.
+      if (!operationalListenersRegistered) {
+        registerWhatsAppEvents(sock)
+        operationalListenersRegistered = true
+      }
+
       logger.info('✅ CHRONOS conectado a WhatsApp')
+      lifecycle.emit('connected')
       return
     }
 
     if (connection === 'close') {
       if (connectedSocket === sock) connectedSocket = null
+
+      whatsappPublicState.qr = null
+      whatsappPublicState.pairingCode = null
+      phonePairingRequested = false
 
       const statusCode = getDisconnectCode(lastDisconnect)
       const message = lastDisconnect?.error?.message || 'sin mensaje'
@@ -180,28 +199,52 @@ export async function startWhatsApp() {
 
       if (statusCode === 429) {
         whatsappPublicState.status = 'RATE_LIMITED'
-        whatsappPublicState.pairingCode = null
         return
       }
 
-      // Exact known-good v2 behavior: only clear on loggedOut or the specific
-      // unregistered registration failures below. In particular, do NOT clear
-      // credentials on 515 here; the previous working build did not do that.
+      // This is the same cleanup policy used by the build that paired correctly.
       if (
         statusCode === DisconnectReason.loggedOut ||
         (noRegistrado && [405, 408, 428].includes(Number(statusCode)))
       ) {
         whatsappPublicState.status = 'PAIRING'
-        whatsappPublicState.pairingCode = null
         await clearInvalidSession()
       } else {
         whatsappPublicState.status = 'RECONNECTING'
-        whatsappPublicState.pairingCode = null
       }
 
       scheduleReconnect(4000)
     }
   })
+}
+
+/**
+ * Explicit fallback for users who prefer WhatsApp's "link with phone number"
+ * flow. Calling this intentionally switches the current registration attempt
+ * from QR to phone-code pairing.
+ */
+export async function requestPhonePairingCode(): Promise<string> {
+  if (!activeSocket) throw new Error('WHATSAPP_SOCKET_NOT_READY')
+  if (activeCredsRegistered?.()) throw new Error('WHATSAPP_ALREADY_REGISTERED')
+  if (phonePairingRequested && whatsappPublicState.pairingCode) {
+    return whatsappPublicState.pairingCode
+  }
+
+  phonePairingRequested = true
+  whatsappPublicState.status = 'PAIRING'
+  whatsappPublicState.qr = null
+
+  try {
+    logger.info(`Pidiendo código para: ${env.WHATSAPP_NUMBER}`)
+    const code = await activeSocket.requestPairingCode(env.WHATSAPP_NUMBER)
+    whatsappPublicState.pairingCode = code
+    logger.info(`CÓDIGO WHATSAPP: ${code}`)
+    return code
+  } catch (error) {
+    phonePairingRequested = false
+    whatsappPublicState.pairingCode = null
+    throw error
+  }
 }
 
 export async function stopWhatsApp() {
@@ -219,7 +262,11 @@ export async function stopWhatsApp() {
 
   activeSocket = null
   connectedSocket = null
+  activeCredsRegistered = null
+  phonePairingRequested = false
+  operationalListenersRegistered = false
   whatsappPublicState.pairingCode = null
+  whatsappPublicState.qr = null
   whatsappPublicState.status = 'DISCONNECTED'
 }
 
