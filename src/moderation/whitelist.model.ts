@@ -1,0 +1,3 @@
+import mongoose from 'mongoose'
+const schema=new mongoose.Schema({memberId:{type:mongoose.Schema.Types.ObjectId,ref:'Member',required:true,index:true},scope:{type:String,enum:['GROUP','COMMUNITY','GLOBAL'],required:true,index:true},groupId:{type:mongoose.Schema.Types.ObjectId,ref:'Group',default:null,index:true},communityId:{type:mongoose.Schema.Types.ObjectId,ref:'Community',default:null,index:true},bypass:{antiLink:Boolean,antiSpam:Boolean,blockedContent:Boolean,mentions:Boolean,newMemberProtection:Boolean},createdBy:String,createdAt:{type:Date,default:Date.now},updatedAt:{type:Date,default:Date.now}},{versionKey:false})
+export const Whitelist=mongoose.model('Whitelist',schema)

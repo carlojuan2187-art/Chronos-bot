@@ -1,0 +1,4 @@
+import mongoose from 'mongoose'
+const schema=new mongoose.Schema({memberId:{type:mongoose.Schema.Types.ObjectId,ref:'Member',required:true,index:true},groupId:{type:mongoose.Schema.Types.ObjectId,ref:'Group',required:true,index:true},communityId:{type:mongoose.Schema.Types.ObjectId,ref:'Community',default:null,index:true},type:{type:String,enum:['LINK','SPAM','FLOOD','BLOCKED_CONTENT','MANUAL'],required:true,index:true},reason:String,status:{type:String,enum:['ACTIVE','EXPIRED','REVOKED'],default:'ACTIVE',index:true},issuedBy:String,source:{type:String,enum:['AUTOMATIC','WHATSAPP_COMMAND','PANEL'],required:true},createdAt:{type:Date,default:Date.now,index:true},expiresAt:{type:Date,index:true},revokedAt:Date},{versionKey:false})
+schema.index({groupId:1,memberId:1,type:1,status:1,expiresAt:1})
+export const Warning=mongoose.model('Warning',schema)

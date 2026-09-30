@@ -1,0 +1,3 @@
+import mongoose from 'mongoose'
+const schema=new mongoose.Schema({content:{type:mongoose.Schema.Types.Mixed,required:true},media:mongoose.Schema.Types.Mixed,targets:{type:mongoose.Schema.Types.Mixed,required:true},schedule:{type:mongoose.Schema.Types.Mixed,required:true},status:{type:String,enum:['ACTIVE','PAUSED','PROCESSING','COMPLETED','CANCELLED'],default:'ACTIVE',index:true},nextRunAt:{type:Date,index:true},lastRunAt:Date,lockedAt:Date,lockedBy:String,createdBy:String,createdAt:{type:Date,default:Date.now},updatedAt:{type:Date,default:Date.now}},{versionKey:false})
+export const ScheduledMessage=mongoose.model('ScheduledMessage',schema)

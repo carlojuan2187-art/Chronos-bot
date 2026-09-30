@@ -1,0 +1,3 @@
+import mongoose from 'mongoose'
+const schema=new mongoose.Schema({actor:{type:String,index:true},actorRole:String,action:{type:String,index:true},communityId:{type:mongoose.Schema.Types.ObjectId,ref:'Community',index:true},groupId:{type:mongoose.Schema.Types.ObjectId,ref:'Group',index:true},targetMemberId:{type:mongoose.Schema.Types.ObjectId,ref:'Member',index:true},source:{type:String,enum:['PANEL','WHATSAPP','SYSTEM'],required:true,index:true},result:{type:String,enum:['SUCCESS','FAILED'],required:true,index:true},reason:String,metadata:mongoose.Schema.Types.Mixed,ipAddress:String,createdAt:{type:Date,default:Date.now,index:true}},{versionKey:false})
+export const AuditLog=mongoose.model('AuditLog',schema)

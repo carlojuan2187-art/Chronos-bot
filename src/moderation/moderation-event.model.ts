@@ -1,0 +1,3 @@
+import mongoose from 'mongoose'
+const schema=new mongoose.Schema({memberId:{type:mongoose.Schema.Types.ObjectId,ref:'Member',index:true},groupId:{type:mongoose.Schema.Types.ObjectId,ref:'Group',index:true},communityId:{type:mongoose.Schema.Types.ObjectId,ref:'Community',index:true},action:{type:String,index:true},reason:String,actor:String,source:{type:String,enum:['AUTOMATIC','WHATSAPP_COMMAND','PANEL','SYSTEM'],required:true},result:{type:String,enum:['SUCCESS','FAILED'],required:true,index:true},metadata:mongoose.Schema.Types.Mixed,createdAt:{type:Date,default:Date.now,index:true}},{versionKey:false})
+export const ModerationEvent=mongoose.model('ModerationEvent',schema)

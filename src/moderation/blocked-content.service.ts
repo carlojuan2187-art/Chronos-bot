@@ -1,0 +1,1 @@
+export function matchBlockedTerm(text:string,terms:any[]){ const normalized=text.toLowerCase(); for(const t of terms||[]){if(!t.enabled)continue;const value=String(t.value||'').toLowerCase().trim();if(!value)continue; if(t.matchType==='EXACT'){const words=normalized.split(/\s+/);if(words.includes(value))return t}else if(normalized.includes(value))return t} return null }

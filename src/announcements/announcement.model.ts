@@ -1,0 +1,3 @@
+import mongoose from 'mongoose'
+const schema=new mongoose.Schema({content:{type:mongoose.Schema.Types.Mixed,required:true},media:mongoose.Schema.Types.Mixed,targetType:{type:String,enum:['GROUP','COMMUNITY','MULTI_COMMUNITY'],required:true},communityIds:[{type:mongoose.Schema.Types.ObjectId,ref:'Community'}],groupIds:[{type:mongoose.Schema.Types.ObjectId,ref:'Group'}],status:{type:String,enum:['DRAFT','PENDING','PROCESSING','SENT','PARTIAL','FAILED','CANCELLED'],default:'DRAFT',index:true},createdBy:String,createdAt:{type:Date,default:Date.now},startedAt:Date,completedAt:Date},{versionKey:false})
+export const Announcement=mongoose.model('Announcement',schema)

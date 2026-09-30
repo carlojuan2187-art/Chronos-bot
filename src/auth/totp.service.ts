@@ -1,0 +1,7 @@
+import { authenticator } from 'otplib'
+import { AdminSecurity } from './admin-security.model.js'
+import { decryptText, encryptText, sha256, randomToken } from '../utils/crypto.js'
+export async function get2FAStatus(adminId:string) { const s=await AdminSecurity.findOne({adminId}).lean(); return { enabled:Boolean(s?.totpEnabled) } }
+export async function begin2FA(adminId:string) { const existing=await AdminSecurity.findOne({adminId}); if(existing?.totpEnabled) throw new Error('2FA_ALREADY_ENABLED'); const secret=authenticator.generateSecret(); await AdminSecurity.findOneAndUpdate({adminId},{adminId,totpEnabled:false,totpSecretEncrypted:encryptText(secret),updatedAt:new Date()},{upsert:true}); return secret }
+export async function confirm2FA(adminId:string, token:string) { const s=await AdminSecurity.findOne({adminId}); if(!s?.totpSecretEncrypted) return {ok:false,recoveryCodes:[] as string[]}; const ok=authenticator.verify({token,secret:decryptText(s.totpSecretEncrypted)}); if(!ok)return {ok:false,recoveryCodes:[] as string[]}; const recoveryCodes=Array.from({length:8},()=>randomToken(5).toUpperCase()); s.totpEnabled=true;s.enrolledAt=new Date();s.updatedAt=new Date();s.recoveryCodesHashes=recoveryCodes.map(sha256);await s.save(); return {ok:true,recoveryCodes} }
+export async function verify2FA(adminId:string, token:string) { const s=await AdminSecurity.findOne({adminId}).lean(); if(!s?.totpEnabled || !s.totpSecretEncrypted) return false; return authenticator.verify({token,secret:decryptText(s.totpSecretEncrypted)}) }
