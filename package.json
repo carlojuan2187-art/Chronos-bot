@@ -1,6 +1,6 @@
 {
   "name": "chronos-backend",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,15 +15,12 @@
     "generate-key": "tsx scripts/generate-encryption-key.ts",
     "create-indexes": "tsx scripts/create-indexes.ts"
   },
-  "engines": {
-    "node": "22.x"
-  },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.24",
     "argon2": "^0.41.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.21.1",
+    "express": "4.21.2",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
     "jose": "^5.9.6",
