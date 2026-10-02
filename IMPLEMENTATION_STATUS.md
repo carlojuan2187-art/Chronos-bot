@@ -44,3 +44,7 @@ npm run build
 ```
 
 No se afirma que el deploy final esté verificado hasta completar esos comandos con dependencias instaladas y conectar un MongoDB/WhatsApp reales.
+
+
+## v2.0.15
+Anti-Bot agregado de forma aislada al pipeline de moderación. Pairing/socket/listeners permanecen congelados. Anti-Bot queda OFF por defecto hasta autorizar bots legítimos y activarlo por grupo.
