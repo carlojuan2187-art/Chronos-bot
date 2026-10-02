@@ -25,6 +25,9 @@ import { begin2FA,confirm2FA,get2FAStatus } from '../auth/totp.service.js'
 import { AppError } from '../errors/app-error.js'
 import { authenticatePreAuth } from '../middleware/preauth.js'
 import { forceGroupMode } from '../scheduler/group-schedule.service.js'
+import { BotAccessRule } from '../moderation/bot-access.model.js'
+import { clearBotAccessCache } from '../moderation/bot-access.service.js'
+import { normalizePhone } from '../utils/jid.js'
 
 
 function routeParam(req: Request, name: string): string {
@@ -34,6 +37,26 @@ function routeParam(req: Request, name: string): string {
   }
   return value
 }
+
+
+const botAccessBase=z.object({
+  name:z.string().min(1),
+  phone:z.string().optional(),
+  userJid:z.string().optional(),
+  access:z.enum(['ALLOW','BLOCK']).default('ALLOW'),
+  scope:z.enum(['GROUP','COMMUNITY','GLOBAL']),
+  groupId:z.string().nullable().optional(),
+  communityId:z.string().nullable().optional(),
+  bypass:z.object({antiBot:z.boolean().default(true),antiLink:z.boolean().default(true),antiSpam:z.boolean().default(true),blockedContent:z.boolean().default(false)}).optional(),
+  status:z.enum(['ACTIVE','SUSPENDED']).default('ACTIVE'),
+  notes:z.string().optional(),
+})
+const botAccessSchema=botAccessBase.superRefine((value,ctx)=>{
+  const phone=normalizePhone(value.phone||'')
+  if(!phone&&!value.userJid)ctx.addIssue({code:z.ZodIssueCode.custom,message:'Debes indicar teléfono o JID del bot'})
+  if(value.scope==='GROUP'&&!value.groupId)ctx.addIssue({code:z.ZodIssueCode.custom,message:'groupId es obligatorio para alcance GROUP'})
+  if(value.scope==='COMMUNITY'&&!value.communityId)ctx.addIssue({code:z.ZodIssueCode.custom,message:'communityId es obligatorio para alcance COMMUNITY'})
+})
 
 export const apiRouter=Router()
 apiRouter.post('/auth/login',loginRateLimit,async(req,res)=>{const b=z.object({username:z.string(),password:z.string(),totp:z.string().optional()}).parse(req.body);res.json({success:true,data:await login(b,{ip:req.ip,userAgent:req.get('user-agent')})})})
@@ -52,7 +75,7 @@ apiRouter.post('/communities',authorize('groups.manage'),async(req,res)=>{const 
 apiRouter.get('/groups',authorize('groups.read'),async(req,res)=>{const q:any={};if(req.query.communityId)q.communityId=req.query.communityId;if(req.query.status)q.status=req.query.status;res.json({success:true,data:await Group.find(q).sort({name:1}).lean()})})
 apiRouter.get('/groups/:id',authorize('groups.read'),async(req,res)=>res.json({success:true,data:await getGroup(routeParam(req,'id'))}))
 apiRouter.patch('/groups/:id/settings',authorize('groups.manage'),async(req,res)=>res.json({success:true,data:await updateGroupSettings(routeParam(req,'id'),req.body)}))
-apiRouter.post('/groups/:id/settings/copy',authorize('groups.manage'),async(req,res)=>{const b=z.object({targetGroupIds:z.array(z.string()).min(1),sections:z.array(z.enum(['antiLink','antiSpam','newMemberProtection','welcome','rules','schedule','blockedTerms'])).min(1)}).parse(req.body);const source=await getGroup(routeParam(req,'id'));const set:any={updatedAt:new Date()};for(const section of b.sections)set[section]=(source as any)[section];const result=await Group.updateMany({_id:{$in:b.targetGroupIds}},{$set:set});res.json({success:true,data:{modified:result.modifiedCount}})})
+apiRouter.post('/groups/:id/settings/copy',authorize('groups.manage'),async(req,res)=>{const b=z.object({targetGroupIds:z.array(z.string()).min(1),sections:z.array(z.enum(['antiLink','antiBot','antiSpam','newMemberProtection','welcome','rules','schedule','blockedTerms'])).min(1)}).parse(req.body);const source=await getGroup(routeParam(req,'id'));const set:any={updatedAt:new Date()};for(const section of b.sections)set[section]=(source as any)[section];const result=await Group.updateMany({_id:{$in:b.targetGroupIds}},{$set:set});res.json({success:true,data:{modified:result.modifiedCount}})})
 apiRouter.patch('/groups/:id/community',authorize('groups.manage'),async(req,res)=>{const b=z.object({communityId:z.string().nullable()}).parse(req.body);res.json({success:true,data:await Group.findByIdAndUpdate(routeParam(req,'id'),{$set:{communityId:b.communityId||null,updatedAt:new Date()}},{new:true})})})
 apiRouter.post('/groups/:id/open',authorize('groups.manage'),async(req,res)=>res.json({success:true,data:await forceGroupMode(routeParam(req,'id'),'OPEN')}))
 apiRouter.post('/groups/:id/close',authorize('groups.manage'),async(req,res)=>res.json({success:true,data:await forceGroupMode(routeParam(req,'id'),'CLOSED')}))
@@ -67,6 +90,10 @@ apiRouter.get('/warnings',authorize('members.read'),async(req,res)=>res.json({su
 apiRouter.post('/warnings/:id/revoke',authorize('members.warn'),async(req,res)=>{const w=await Warning.findByIdAndUpdate(routeParam(req,'id'),{$set:{status:'REVOKED',revokedAt:new Date()}},{new:true});res.json({success:true,data:w})})
 apiRouter.get('/bans',authorize('members.read'),async(_req,res)=>res.json({success:true,data:await Ban.find().sort({createdAt:-1}).limit(500).lean()}))
 apiRouter.post('/bans/:id/revoke',authorize('members.groupBan'),async(req,res)=>res.json({success:true,data:await revokeBan(routeParam(req,'id'))}))
+apiRouter.get('/bot-access',authorize('bots.manage'),async(_req,res)=>res.json({success:true,data:await BotAccessRule.find().sort({createdAt:-1}).lean()}))
+apiRouter.post('/bot-access',authorize('bots.manage'),async(req,res)=>{const b=botAccessSchema.parse(req.body);const phone=normalizePhone(b.phone||'');const doc=await BotAccessRule.create({name:b.name,phoneNumberNormalized:phone,userJid:b.userJid||'',alternateJids:[],access:b.access,scope:b.scope,groupId:b.scope==='GROUP'?b.groupId:null,communityId:b.scope==='COMMUNITY'?b.communityId:null,bypass:{antiBot:b.bypass?.antiBot!==false,antiLink:b.bypass?.antiLink!==false,antiSpam:b.bypass?.antiSpam!==false,blockedContent:Boolean(b.bypass?.blockedContent)},status:b.status,notes:b.notes||'',createdBy:req.admin!.username});clearBotAccessCache();res.json({success:true,data:doc})})
+apiRouter.patch('/bot-access/:id',authorize('bots.manage'),async(req,res)=>{const patch=botAccessBase.partial().parse(req.body);const current=await BotAccessRule.findById(routeParam(req,'id'));if(!current)throw new AppError('NOT_FOUND','Regla de bot no encontrada',404);const b=botAccessSchema.parse({name:patch.name??current.name,phone:patch.phone??current.phoneNumberNormalized,userJid:patch.userJid??current.userJid,access:patch.access??current.access,scope:patch.scope??current.scope,groupId:patch.groupId!==undefined?patch.groupId:current.groupId?String(current.groupId):null,communityId:patch.communityId!==undefined?patch.communityId:current.communityId?String(current.communityId):null,bypass:patch.bypass??current.bypass,status:patch.status??current.status,notes:patch.notes??current.notes});current.name=b.name;current.phoneNumberNormalized=normalizePhone(b.phone||'');current.userJid=b.userJid||'';current.access=b.access;current.scope=b.scope;current.groupId=b.scope==='GROUP'?(b.groupId as any):null;current.communityId=b.scope==='COMMUNITY'?(b.communityId as any):null;current.bypass={antiBot:b.bypass?.antiBot!==false,antiLink:b.bypass?.antiLink!==false,antiSpam:b.bypass?.antiSpam!==false,blockedContent:Boolean(b.bypass?.blockedContent)};current.status=b.status;current.notes=b.notes||'';current.updatedAt=new Date();await current.save();clearBotAccessCache();res.json({success:true,data:current})})
+apiRouter.delete('/bot-access/:id',authorize('bots.manage'),async(req,res)=>{const doc=await BotAccessRule.findByIdAndDelete(routeParam(req,'id'));if(!doc)throw new AppError('NOT_FOUND','Regla de bot no encontrada',404);clearBotAccessCache();res.json({success:true,data:{deleted:true}})})
 apiRouter.get('/whitelist',authorize('whitelist.manage'),async(_req,res)=>res.json({success:true,data:await Whitelist.find().lean()}))
 apiRouter.post('/whitelist',authorize('whitelist.manage'),async(req,res)=>res.json({success:true,data:await Whitelist.create({...req.body,createdBy:req.admin!.username})}))
 apiRouter.delete('/whitelist/:id',authorize('whitelist.manage'),async(req,res)=>{await Whitelist.findByIdAndDelete(routeParam(req,'id'));res.json({success:true,data:{deleted:true}})})
