@@ -5,6 +5,7 @@ BUILD_FIXES_2.0.1.md
 BUILD_FIXES_2.0.10.md
 BUILD_FIXES_2.0.11.md
 BUILD_FIXES_2.0.13.md
+BUILD_FIXES_2.0.14.md
 BUILD_FIXES_2.0.2.md
 BUILD_FIXES_2.0.3.md
 BUILD_FIXES_2.0.4.md
@@ -65,6 +66,7 @@ src/moderation/moderation.engine.ts
 src/moderation/moderation.service.ts
 src/moderation/warning.model.ts
 src/moderation/warning.service.ts
+src/moderation/whatsapp-admin.service.ts
 src/moderation/whitelist.model.ts
 src/moderation/whitelist.service.ts
 src/routes/index.ts
@@ -85,4 +87,5 @@ src/whatsapp/whatsapp.events.ts
 src/whatsapp/whatsapp.sync.ts
 tests/unit/anti-link.test.ts
 tests/unit/permissions.test.ts
+tests/unit/whatsapp-admin.test.ts
 tsconfig.json
