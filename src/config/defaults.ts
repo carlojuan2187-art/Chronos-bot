@@ -4,10 +4,13 @@ export const DEFAULT_GROUP_SETTINGS = {
     enabled: true,
     warningExpiresInDays: 30,
     detectHttpLinks: true,
+    detectBareDomains: true,
     detectWhatsAppLinks: true,
     detectTelegramLinks: true,
     detectPhoneNumbers: true,
     detectObfuscatedLinks: true,
+    allowGroupAdmins: true,
+    allowCommunityAdmins: true,
   },
   antiSpam: {
     enabled: true,
@@ -20,6 +23,7 @@ export const DEFAULT_GROUP_SETTINGS = {
     mediaThreshold: 6,
     mediaWindowSeconds: 20,
     mentionThreshold: 8,
+    detectMassMentions: true,
   },
   newMemberProtection: { enabled: true, durationMinutes: 15 },
   welcome: {
