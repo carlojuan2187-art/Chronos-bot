@@ -13,6 +13,7 @@ import { canWhatsAppAdminBypassAntiLink } from './whatsapp-admin.service.js'
 import { accessBypass, botAccessForMember, messageIdentityCandidates } from './bot-access.service.js'
 import { detectUnauthorizedBot } from './anti-bot.service.js'
 import { audit } from '../audit/audit.service.js'
+import { sendAntiBotRemovalFeedback, sendAntiLinkFirstWarning, sendAntiLinkRemovalFeedback } from './moderation-feedback.service.js'
 
 function extractText(msg:WAMessage){const m:any=msg.message||{};return String(m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||'')}
 export async function moderateMessage(sock:WASocket,msg:WAMessage){
@@ -34,6 +35,7 @@ export async function moderateMessage(sock:WASocket,msg:WAMessage){
     try{
       await kick(group,member,`Bot bloqueado: ${botAccess.name||'regla Anti-Bot'}`,'AUTOMATIC','CHRONOS')
       await audit({actor:'CHRONOS',action:'BOT_BLOCK_RULE_ENFORCED',groupId:group._id,communityId:group.communityId,targetMemberId:member._id,source:'SYSTEM',result:'SUCCESS',reason:'Bot incluido en lista de bloqueo',metadata:{botAccessRuleId:botAccess._id,name:botAccess.name}})
+      await sendAntiBotRemovalFeedback(sock,groupJid)
     }catch(error:any){
       await audit({actor:'CHRONOS',action:'BOT_BLOCK_RULE_ENFORCED',groupId:group._id,communityId:group.communityId,targetMemberId:member._id,source:'SYSTEM',result:'FAILED',reason:String(error?.message||error),metadata:{botAccessRuleId:botAccess._id,name:botAccess.name}})
       throw error
@@ -49,6 +51,7 @@ export async function moderateMessage(sock:WASocket,msg:WAMessage){
       try{
         await kick(group,member,detection.reason,'AUTOMATIC','CHRONOS')
         await audit({actor:'CHRONOS',action:'UNAUTHORIZED_BOT_REMOVED',groupId:group._id,communityId:group.communityId,targetMemberId:member._id,source:'SYSTEM',result:'SUCCESS',reason:detection.reason,metadata:{score:detection.score,signals:detection.signals}})
+        await sendAntiBotRemovalFeedback(sock,groupJid)
       }catch(error:any){
         await audit({actor:'CHRONOS',action:'UNAUTHORIZED_BOT_REMOVAL_FAILED',groupId:group._id,communityId:group.communityId,targetMemberId:member._id,source:'SYSTEM',result:'FAILED',reason:String(error?.message||error),metadata:{score:detection.score,signals:detection.signals}})
         throw error
@@ -60,10 +63,15 @@ export async function moderateMessage(sock:WASocket,msg:WAMessage){
   const antiLink=(group as any).antiLink
   if(detectsBlockedLink(text,antiLink)&&!accessBypass(botAccess,'antiLink')&&!(await hasBypass(member._id,group,'antiLink'))&&!(await canWhatsAppAdminBypassAntiLink(sock,msg,antiLink))){
     await deleteMsg();const active=await activeWarnings(member._id,group._id,'LINK')
-    if(active.length>=1){await kick(group,member,'Segunda infracción anti-link','AUTOMATIC','CHRONOS');return}
+    if(active.length>=1){
+      await kick(group,member,'Segunda infracción anti-link','AUTOMATIC','CHRONOS')
+      await sendAntiLinkRemovalFeedback(sock,groupJid)
+      return
+    }
     const days=Number((group as any).antiLink?.warningExpiresInDays||30)
     await warn(group,member,'LINK','Enlace/promoción no permitida','AUTOMATIC','CHRONOS',new Date(Date.now()+days*86400000))
-    await sock.sendMessage(groupJid,{text:`⚠️ ${label}, los enlaces o promociones no están permitidos. Esta es tu primera advertencia.`,mentions:[mention]});return
+    await sendAntiLinkFirstWarning(sock,groupJid,label,mention)
+    return
   }
 
   const m:any=msg.message||{};const media=Boolean(m.imageMessage||m.videoMessage||m.stickerMessage||m.documentMessage);const mentions=(m.extendedTextMessage?.contextInfo?.mentionedJid||[]).length
