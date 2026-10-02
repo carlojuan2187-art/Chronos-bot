@@ -9,6 +9,7 @@ import { detectSpam } from './anti-spam.service.js'
 import { matchBlockedTerm } from './blocked-content.service.js'
 import { phoneCandidatesFromMessageKey, phoneFromJid } from '../utils/jid.js'
 import { findAdminByPhone } from '../auth/auth.service.js'
+import { canWhatsAppAdminBypassAntiLink } from './whatsapp-admin.service.js'
 
 function extractText(msg:WAMessage){const m:any=msg.message||{};return String(m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||'')}
 export async function moderateMessage(sock:WASocket,msg:WAMessage){
@@ -22,7 +23,8 @@ export async function moderateMessage(sock:WASocket,msg:WAMessage){
   const label=(msg as any).pushName||member.phoneNumberNormalized||phoneFromJid(participant)||'usuario'
   const deleteMsg=async()=>{try{await sock.sendMessage(groupJid,{delete:msg.key})}catch{}}
 
-  if(detectsBlockedLink(text,(group as any).antiLink)&&!(await hasBypass(member._id,group,'antiLink'))){
+  const antiLink=(group as any).antiLink
+  if(detectsBlockedLink(text,antiLink)&&!(await hasBypass(member._id,group,'antiLink'))&&!(await canWhatsAppAdminBypassAntiLink(sock,msg,antiLink))){
     await deleteMsg();const active=await activeWarnings(member._id,group._id,'LINK')
     if(active.length>=1){await kick(group,member,'Segunda infracción anti-link','AUTOMATIC','CHRONOS');return}
     const days=Number((group as any).antiLink?.warningExpiresInDays||30)

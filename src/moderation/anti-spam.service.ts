@@ -4,4 +4,4 @@ export function detectSpam(key:string,text:string,isMedia:boolean,mentions:numbe
   const dup=arr.filter(e=>now-e.at<=cfg.duplicateWindowSeconds*1000&&e.text&&e.text===text.trim().toLowerCase()).length; if(dup>=cfg.duplicateThreshold)return 'DUPLICATE'
   const burst=arr.filter(e=>now-e.at<=cfg.burstWindowSeconds*1000).length; if(burst>=cfg.burstThreshold)return 'BURST'
   const media=arr.filter(e=>now-e.at<=cfg.mediaWindowSeconds*1000&&e.isMedia).length; if(media>=cfg.mediaThreshold)return 'MEDIA_FLOOD'
-  if(mentions>=cfg.mentionThreshold)return 'MENTION_FLOOD'; return null }
+  if(cfg.detectMassMentions!==false&&mentions>=cfg.mentionThreshold)return 'MENTION_FLOOD'; return null }
