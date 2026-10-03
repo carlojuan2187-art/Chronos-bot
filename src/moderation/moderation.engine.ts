@@ -13,6 +13,7 @@ import { canWhatsAppAdminBypassAntiLink } from './whatsapp-admin.service.js'
 import { accessBypass, botAccessForMember, messageIdentityCandidates } from './bot-access.service.js'
 import { detectUnauthorizedBot } from './anti-bot.service.js'
 import { audit } from '../audit/audit.service.js'
+import { logger } from '../utils/logger.js'
 
 function extractText(msg:WAMessage){const m:any=msg.message||{};return String(m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||'')}
 export async function moderateMessage(sock:WASocket,msg:WAMessage){
@@ -24,11 +25,16 @@ export async function moderateMessage(sock:WASocket,msg:WAMessage){
   const admin=phoneCandidatesFromMessageKey(msg.key).map(findAdminByPhone).find(Boolean);if(admin)return
   const mention=participant
   const label=(msg as any).pushName||member.phoneNumberNormalized||phoneFromJid(participant)||'usuario'
-  const deleteMsg=async()=>{try{await sock.sendMessage(groupJid,{delete:msg.key})}catch{}}
+  const deleteMsg=async()=>{try{await sock.sendMessage(groupJid,{delete:msg.key});return true}catch(error){logger.warn({err:error,groupJid,messageId:msg.key.id,participant},'Anti-moderation message delete failed');return false}}
 
   // Bot access rules are evaluated before automatic filters. An ALLOW rule can
   // exempt a known publisher/support bot; a BLOCK rule is an explicit removal.
-  const botAccess=await botAccessForMember(member,group,messageIdentityCandidates(msg),phoneCandidatesFromMessageKey(msg.key))
+  let botAccess:any=null
+  try{
+    botAccess=await botAccessForMember(member,group,messageIdentityCandidates(msg),phoneCandidatesFromMessageKey(msg.key))
+  }catch(error){
+    logger.warn({err:error,groupJid,messageId:msg.key.id,participant},'Bot access lookup failed; continuing automatic moderation without bot bypass')
+  }
   if(botAccess?.access==='BLOCK'){
     await deleteMsg()
     try{
@@ -59,6 +65,7 @@ export async function moderateMessage(sock:WASocket,msg:WAMessage){
 
   const antiLink=(group as any).antiLink
   if(detectsBlockedLink(text,antiLink)&&!accessBypass(botAccess,'antiLink')&&!(await hasBypass(member._id,group,'antiLink'))&&!(await canWhatsAppAdminBypassAntiLink(sock,msg,antiLink))){
+    logger.info({groupJid,messageId:msg.key.id,participant},'Anti-link violation detected')
     await deleteMsg();const active=await activeWarnings(member._id,group._id,'LINK')
     if(active.length>=1){await kick(group,member,'Segunda infracción anti-link','AUTOMATIC','CHRONOS');return}
     const days=Number((group as any).antiLink?.warningExpiresInDays||30)
