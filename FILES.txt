@@ -94,3 +94,5 @@ tests/unit/anti-link.test.ts
 tests/unit/permissions.test.ts
 tests/unit/whatsapp-admin.test.ts
 tsconfig.json
+
+BUILD_FIXES_2.0.18.md
