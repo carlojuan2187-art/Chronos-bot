@@ -6,7 +6,6 @@ BUILD_FIXES_2.0.10.md
 BUILD_FIXES_2.0.11.md
 BUILD_FIXES_2.0.13.md
 BUILD_FIXES_2.0.14.md
-BUILD_FIXES_2.0.15.md
 BUILD_FIXES_2.0.2.md
 BUILD_FIXES_2.0.3.md
 BUILD_FIXES_2.0.4.md
@@ -58,13 +57,10 @@ src/middleware/preauth.ts
 src/middleware/rate-limit.ts
 src/middleware/request-id.ts
 src/middleware/validate.ts
-src/moderation/anti-bot.service.ts
 src/moderation/anti-link.service.ts
 src/moderation/anti-spam.service.ts
 src/moderation/ban.model.ts
 src/moderation/blocked-content.service.ts
-src/moderation/bot-access.model.ts
-src/moderation/bot-access.service.ts
 src/moderation/moderation-event.model.ts
 src/moderation/moderation.engine.ts
 src/moderation/moderation.service.ts
@@ -89,10 +85,7 @@ src/whatsapp/state.ts
 src/whatsapp/whatsapp.client.ts
 src/whatsapp/whatsapp.events.ts
 src/whatsapp/whatsapp.sync.ts
-tests/unit/anti-bot.test.ts
 tests/unit/anti-link.test.ts
 tests/unit/permissions.test.ts
 tests/unit/whatsapp-admin.test.ts
 tsconfig.json
-
-BUILD_FIXES_2.0.18.md

@@ -46,7 +46,6 @@ npm run dev
 - `/api/v1/warnings`
 - `/api/v1/bans`
 - `/api/v1/whitelist`
-- `/api/v1/bot-access`
 - `/api/v1/announcements/*`
 - `/api/v1/schedules/*`
 - `/api/v1/audit`
@@ -56,10 +55,3 @@ npm run dev
 - `ADMIN_SECURITY_ENCRYPTION_KEY` debe ser un hex de 32 bytes (64 caracteres).
 - Usa un Volume persistente para no perder la sesión de WhatsApp.
 - Baileys no es una API oficial de WhatsApp; conviene mantener ritmo conservador de envíos y monitorear cambios de compatibilidad.
-
-## Anti-Bot v2.0.15
-- Se mantiene desactivado por defecto por grupo para evitar expulsiones inesperadas.
-- Autoriza o bloquea bots por alcance GLOBAL, COMMUNITY o GROUP.
-- Los bots autorizados pueden recibir bypass independiente de Anti-Bot, Anti-Link, Anti-Spam y contenido bloqueado.
-- La detección de comportamiento usa señales de moderación automatizada y firmas personalizadas; no existe una etiqueta universal de "bot" en WhatsApp.
-- Recomendación de despliegue: registrar primero los bots legítimos y luego activar Anti-Bot grupo por grupo.
