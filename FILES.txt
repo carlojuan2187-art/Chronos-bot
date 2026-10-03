@@ -7,7 +7,6 @@ BUILD_FIXES_2.0.11.md
 BUILD_FIXES_2.0.13.md
 BUILD_FIXES_2.0.14.md
 BUILD_FIXES_2.0.15.md
-BUILD_FIXES_2.0.16.md
 BUILD_FIXES_2.0.2.md
 BUILD_FIXES_2.0.3.md
 BUILD_FIXES_2.0.4.md
@@ -19,7 +18,6 @@ BUILD_FIXES_2.0.9.md
 FILES.txt
 IMPLEMENTATION_STATUS.md
 README.md
-assets/stickers/chronos-warning.webp
 package.json
 pairing-engine.cjs
 railway.toml
@@ -68,7 +66,6 @@ src/moderation/blocked-content.service.ts
 src/moderation/bot-access.model.ts
 src/moderation/bot-access.service.ts
 src/moderation/moderation-event.model.ts
-src/moderation/moderation-feedback.service.ts
 src/moderation/moderation.engine.ts
 src/moderation/moderation.service.ts
 src/moderation/warning.model.ts
@@ -94,7 +91,6 @@ src/whatsapp/whatsapp.events.ts
 src/whatsapp/whatsapp.sync.ts
 tests/unit/anti-bot.test.ts
 tests/unit/anti-link.test.ts
-tests/unit/moderation-feedback.test.ts
 tests/unit/permissions.test.ts
 tests/unit/whatsapp-admin.test.ts
 tsconfig.json
