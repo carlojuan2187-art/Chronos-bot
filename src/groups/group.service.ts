@@ -26,7 +26,6 @@ export async function upsertGroupFromWhatsApp(meta:any, botIdentity?:{id?:string
     },$setOnInsert:{
       shortCode:nextCode(),settingsVersion:1,
       antiLink:DEFAULT_GROUP_SETTINGS.antiLink,
-      antiBot:DEFAULT_GROUP_SETTINGS.antiBot,
       antiSpam:DEFAULT_GROUP_SETTINGS.antiSpam,
       newMemberProtection:DEFAULT_GROUP_SETTINGS.newMemberProtection,
       welcome:DEFAULT_GROUP_SETTINGS.welcome,
@@ -38,4 +37,4 @@ export async function upsertGroupFromWhatsApp(meta:any, botIdentity?:{id?:string
   )
 }
 export async function getGroup(id:string){ const g=await Group.findById(id); if(!g) throw new AppError('GROUP_NOT_FOUND','Grupo no encontrado',404); return g }
-export async function updateGroupSettings(id:string,input:any){ const allowed=['antiLink','antiBot','antiSpam','newMemberProtection','welcome','rules','schedule','blockedTerms']; const set:any={updatedAt:new Date()}; for(const k of allowed) if(input[k]!==undefined) set[k]=input[k]; return Group.findByIdAndUpdate(id,{$set:set},{new:true,runValidators:true}) }
+export async function updateGroupSettings(id:string,input:any){ const allowed=['antiLink','antiSpam','newMemberProtection','welcome','rules','schedule','blockedTerms']; const set:any={updatedAt:new Date()}; for(const k of allowed) if(input[k]!==undefined) set[k]=input[k]; return Group.findByIdAndUpdate(id,{$set:set},{new:true,runValidators:true}) }

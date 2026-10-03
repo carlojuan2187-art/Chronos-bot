@@ -12,17 +12,6 @@ export const DEFAULT_GROUP_SETTINGS = {
     allowGroupAdmins: true,
     allowCommunityAdmins: true,
   },
-  antiBot: {
-    enabled: false,
-    action: 'KICK' as const,
-    deleteDetectedMessage: true,
-    scoreThreshold: 4,
-    repeatThreshold: 2,
-    repeatWindowSeconds: 600,
-    detectModerationWarnings: true,
-    detectAutomationLanguage: true,
-    customSignatures: [] as string[],
-  },
   antiSpam: {
     enabled: true,
     mode: 'FLEXIBLE' as const,
