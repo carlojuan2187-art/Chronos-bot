@@ -58,3 +58,9 @@ Anti-Bot agregado de forma aislada al pipeline de moderación. Pairing/socket/li
 - Reconciliación posterior a sincronización completa.
 - Mensaje público al expulsar.
 - Panel/API para configuración, consulta, alta manual y revocación OWNER.
+
+## v2.1.2 — Production recovery
+- MongoDB se conecta al arrancar de forma independiente al estado de WhatsApp; el login del panel no queda bloqueado por pairing/desconexión.
+- Scam Guard recibe el socket por inyección y deja de importar `whatsapp.client.ts`, eliminando la dependencia circular del runtime.
+- `pairing-engine.cjs`, `whatsapp.client.ts`, `auth.service.ts`, `token.service.ts`, `env.ts` y `app.ts` permanecen byte-for-byte iguales a v2.0.15.
+- Sin variables de entorno nuevas.
