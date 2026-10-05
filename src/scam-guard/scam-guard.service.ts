@@ -13,7 +13,6 @@ import { Ban } from '../moderation/ban.model.js'
 import { Group } from '../groups/group.model.js'
 import { audit } from '../audit/audit.service.js'
 import { logger } from '../utils/logger.js'
-import { getWhatsAppSocket } from '../whatsapp/whatsapp.client.js'
 import { AppError } from '../errors/app-error.js'
 import { GroupMembership } from '../members/membership.model.js'
 
@@ -67,7 +66,7 @@ async function ensureGlobalBan(phone:string,member:any,reason:string,actor:strin
   return{ban,ownsBan:true}
 }
 
-export async function registerScamReport(input:{phone:string;reason?:string;actor:ScamGuardActor;source:'WHATSAPP'|'PANEL';sourceJid?:string;sourceMessageId?:string}){
+export async function registerScamReport(input:{phone:string;reason?:string;actor:ScamGuardActor;source:'WHATSAPP'|'PANEL';sourceJid?:string;sourceMessageId?:string;sock?:WASocket|null}){
   const phone=normalizePhone(input.phone)
   if(phone.length<8||phone.length>15)throw new AppError('VALIDATION_ERROR','Número reportado inválido',400)
   if(protectedPhone(phone))throw new AppError('PROTECTED_ADMIN','No se puede añadir a Scam Guard el número del bot ni un administrador configurado de CHRONOS',409)
@@ -90,7 +89,7 @@ export async function registerScamReport(input:{phone:string;reason?:string;acto
   const preservesOwnedBan=Boolean(entry.ownsBan&&entry.banId&&String(entry.banId)===String(banResult.ban._id));entry.memberId=member._id;entry.banId=banResult.ban._id;entry.ownsBan=preservesOwnedBan||banResult.ownsBan;entry.updatedAt=new Date();await entry.save()
   await audit({actor:input.actor.username,actorRole:input.actor.role,action:'SCAM_GUARD_REPORT_ACCEPTED',targetMemberId:member._id,source:input.source==='PANEL'?'PANEL':'WHATSAPP',result:'SUCCESS',reason,metadata:{phoneNumberNormalized:phone,sourceJid:input.sourceJid||null,entryId:entry._id}})
   const cfg=await getHotScamGuardConfig()
-  if(cfg.scanExistingGroups!==false)queueScamSweep(String(entry._id))
+  if(cfg.scanExistingGroups!==false&&input.sock)queueScamSweep(String(entry._id),input.sock)
   return entry
 }
 
@@ -130,8 +129,7 @@ async function removeEntryFromGroup(sock:WASocket,entry:any,group:any,participan
   return true
 }
 
-async function sweepEntry(entryId:string){
-  const sock=getWhatsAppSocket();if(!sock)return
+async function sweepEntry(entryId:string,sock:WASocket){
   const entry=await ScamEntry.findOne({_id:entryId,status:'ACTIVE'});if(!entry)return
   const cfg=await getHotScamGuardConfig();if(!cfg.enabled)return
   const groups=await Group.find({botIsAdmin:true,status:'ACTIVE'}).sort({name:1})
@@ -145,12 +143,11 @@ async function sweepEntry(entryId:string){
   }
 }
 
-export function queueScamSweep(entryId:string){
-  sweepChain=sweepChain.then(()=>sweepEntry(entryId)).catch(error=>logger.error({err:error,entryId},'Scam Guard sweep failed'))
+export function queueScamSweep(entryId:string,sock:WASocket){
+  sweepChain=sweepChain.then(()=>sweepEntry(entryId,sock)).catch(error=>logger.error({err:error,entryId},'Scam Guard sweep failed'))
 }
 
-async function reconcileKnownMemberships(){
-  const sock=getWhatsAppSocket();if(!sock)return
+async function reconcileKnownMemberships(sock:WASocket){
   const cfg=await getHotScamGuardConfig();if(!cfg.enabled)return
   const entries=await ScamEntry.find({status:'ACTIVE',memberId:{$ne:null}})
   for(const entry of entries){
@@ -166,10 +163,10 @@ async function reconcileKnownMemberships(){
   }
 }
 
-export function queueScamGuardReconciliation(){
+export function queueScamGuardReconciliation(sock:WASocket){
   if(reconciliationQueued)return
   reconciliationQueued=true
-  sweepChain=sweepChain.then(()=>reconcileKnownMemberships()).catch(error=>logger.error({err:error},'Scam Guard reconciliation failed')).finally(()=>{reconciliationQueued=false})
+  sweepChain=sweepChain.then(()=>reconcileKnownMemberships(sock)).catch(error=>logger.error({err:error},'Scam Guard reconciliation failed')).finally(()=>{reconciliationQueued=false})
 }
 
 export async function handleScamGuardParticipantAdd(sock:WASocket,group:any,userJid:string){
@@ -210,7 +207,7 @@ export async function handleScamGuardMessage(sock:WASocket,msg:WAMessage){
   const parsed=parseScamReport(text);if(!parsed)return false
   const accepted:string[]=[],rejected:string[]=[]
   for(const phone of parsed.phones){
-    try{const entry=await registerScamReport({phone,reason:parsed.reason,actor,source:'WHATSAPP',sourceJid:jid,sourceMessageId:msg.key.id||undefined});accepted.push(String(entry.phoneNumberNormalized))}
+    try{const entry=await registerScamReport({phone,reason:parsed.reason,actor,source:'WHATSAPP',sourceJid:jid,sourceMessageId:msg.key.id||undefined,sock});accepted.push(String(entry.phoneNumberNormalized))}
     catch(error:any){rejected.push(`${phone}: ${String(error?.message||error)}`)}
   }
   if(accepted.length){await sock.sendMessage(jid,{text:`🛡️ *SCAM GUARD*\n\n✅ ${accepted.length} número(s) añadido(s) a la lista negra global permanente.\n${accepted.map(phone=>`• ${maskPhone(phone)}`).join('\n')}\n\nCHRONOS inició la revisión de los grupos protegidos.`})}
