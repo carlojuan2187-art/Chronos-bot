@@ -30,6 +30,13 @@ async function main() {
     await syncGroups().catch((error) => logger.warn({ err: error }, 'Initial/reconnect group sync failed'))
   }
 
+  // The control panel must remain available even when WhatsApp is not yet paired.
+  // Connect MongoDB independently before starting the WhatsApp pairing lifecycle.
+  if (!databaseConnected) {
+    await connectDatabase()
+    databaseConnected = true
+  }
+
   onWhatsAppConnected(() => void startOperationalRuntime())
   await startWhatsApp()
 
