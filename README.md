@@ -81,3 +81,7 @@ Endpoints:
 - `GET /api/v1/scam-guard/reports`
 - `POST /api/v1/scam-guard/report`
 - `POST /api/v1/scam-guard/entries/:id/revoke`
+
+
+### Scam Guard v2.1.3
+Las fuentes privadas de reportes resuelven OWNER/ADMIN incluso cuando WhatsApp entrega LID en lugar del PN directo. Los reportes reenviados y números enviados como texto se procesan automáticamente.

@@ -64,3 +64,7 @@ Anti-Bot agregado de forma aislada al pipeline de moderación. Pairing/socket/li
 - Scam Guard recibe el socket por inyección y deja de importar `whatsapp.client.ts`, eliminando la dependencia circular del runtime.
 - `pairing-engine.cjs`, `whatsapp.client.ts`, `auth.service.ts`, `token.service.ts`, `env.ts` y `app.ts` permanecen byte-for-byte iguales a v2.0.15.
 - Sin variables de entorno nuevas.
+
+
+## v2.1.3
+Scam Guard: corrección de captura desde grupo privado cuando WhatsApp entrega identidad LID; soporte adicional para mensajes reenviados/envueltos y diagnóstico explícito de reportero no reconocido.
