@@ -4,7 +4,7 @@ Backend multi-community para administración de comunidades de WhatsApp con Bail
 
 ## Servicios
 - `chronos-backend`: API + WhatsApp + moderación + scheduler.
-- `chronos-panel`: se construirá después y consumirá `/api/v1`.
+- `chronos-panel`: frontend administrativo separado que consume `/api/v1`.
 - MongoDB Atlas: externo.
 
 ## Railway
@@ -63,3 +63,21 @@ npm run dev
 - Los bots autorizados pueden recibir bypass independiente de Anti-Bot, Anti-Link, Anti-Spam y contenido bloqueado.
 - La detección de comportamiento usa señales de moderación automatizada y firmas personalizadas; no existe una etiqueta universal de "bot" en WhatsApp.
 - Recomendación de despliegue: registrar primero los bots legítimos y luego activar Anti-Bot grupo por grupo.
+
+## Scam Guard v2.1.0
+- Fuente privada de reportes confiables.
+- Solo OWNER/ADMIN de CHRONOS pueden registrar números desde la fuente.
+- Cada número confirmado crea/mantiene un ban GLOBAL permanente.
+- CHRONOS revisa los grupos protegidos y expulsa coincidencias de forma serial.
+- Si el número intenta entrar más adelante, `group-participants.update` ejecuta la expulsión inmediata.
+- Tras una expulsión, el grupo recibe una alerta pública sin revelar quién hizo el reporte.
+- OWNER puede retirar un bloqueo desde el panel.
+- La fuente puede registrarse desde el panel o con `/scam-source` ejecutado por OWNER.
+
+Endpoints:
+- `GET /api/v1/scam-guard/config`
+- `PATCH /api/v1/scam-guard/config`
+- `GET /api/v1/scam-guard/entries`
+- `GET /api/v1/scam-guard/reports`
+- `POST /api/v1/scam-guard/report`
+- `POST /api/v1/scam-guard/entries/:id/revoke`

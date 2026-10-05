@@ -15,6 +15,7 @@ BUILD_FIXES_2.0.6.md
 BUILD_FIXES_2.0.7.md
 BUILD_FIXES_2.0.8.md
 BUILD_FIXES_2.0.9.md
+BUILD_FIXES_2.1.0.md
 FILES.txt
 IMPLEMENTATION_STATUS.md
 README.md
@@ -74,6 +75,11 @@ src/moderation/whatsapp-admin.service.ts
 src/moderation/whitelist.model.ts
 src/moderation/whitelist.service.ts
 src/routes/index.ts
+src/scam-guard/scam-entry.model.ts
+src/scam-guard/scam-guard-config.model.ts
+src/scam-guard/scam-guard.parser.ts
+src/scam-guard/scam-guard.service.ts
+src/scam-guard/scam-report.model.ts
 src/scheduler/dispatch.model.ts
 src/scheduler/group-schedule.service.ts
 src/scheduler/scheduled-message.model.ts
@@ -92,5 +98,6 @@ src/whatsapp/whatsapp.sync.ts
 tests/unit/anti-bot.test.ts
 tests/unit/anti-link.test.ts
 tests/unit/permissions.test.ts
+tests/unit/scam-guard.test.ts
 tests/unit/whatsapp-admin.test.ts
 tsconfig.json

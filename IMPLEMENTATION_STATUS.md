@@ -1,4 +1,4 @@
-# Estado de implementación — CHRONOS Backend 2.0
+# Estado de implementación — CHRONOS Backend 2.1
 
 ## Implementado
 - TypeScript modular.
@@ -48,3 +48,13 @@ No se afirma que el deploy final esté verificado hasta completar esos comandos 
 
 ## v2.0.15
 Anti-Bot agregado de forma aislada al pipeline de moderación. Pairing/socket/listeners permanecen congelados. Anti-Bot queda OFF por defecto hasta autorizar bots legítimos y activarlo por grupo.
+
+## v2.1.0 — Scam Guard
+- Fuente de reportes privada configurable.
+- Reportes confiables limitados a OWNER/ADMIN de plataforma.
+- Blacklist global permanente por teléfono.
+- Barrido inmediato serial de grupos protegidos.
+- Bloqueo de reingreso mediante evento de participantes.
+- Reconciliación posterior a sincronización completa.
+- Mensaje público al expulsar.
+- Panel/API para configuración, consulta, alta manual y revocación OWNER.
