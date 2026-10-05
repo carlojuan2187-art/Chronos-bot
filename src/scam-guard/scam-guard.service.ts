@@ -9,6 +9,7 @@ type ScamGuardActor=Pick<PanelUser,'username'|'phone'|'role'>
 import { findAdminByPhone } from '../auth/auth.service.js'
 import { phoneCandidatesFromMessageKey,normalizePhone,participantJids,phoneFromJid,isPhoneJid,sameUserJid,uniqueJids } from '../utils/jid.js'
 import { upsertMember,setMembership } from '../members/member.service.js'
+import { Member } from '../members/member.model.js'
 import { Ban } from '../moderation/ban.model.js'
 import { Group } from '../groups/group.model.js'
 import { audit } from '../audit/audit.service.js'
@@ -23,9 +24,80 @@ let hotConfig:any=null
 let hotConfigAt=0
 const HOT_CONFIG_TTL_MS=30_000
 
-function messageText(msg:WAMessage){const m:any=msg.message||{};return String(m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||'').trim()}
+function unwrapMessageContent(message:any):any{
+  let current=message||{}
+  for(let i=0;i<6;i++){
+    const nested=current?.ephemeralMessage?.message||current?.viewOnceMessage?.message||current?.viewOnceMessageV2?.message||current?.viewOnceMessageV2Extension?.message||current?.documentWithCaptionMessage?.message||current?.editedMessage?.message
+    if(!nested)break
+    current=nested
+  }
+  return current
+}
+
+export function scamGuardMessageText(msg:WAMessage){
+  const m:any=unwrapMessageContent(msg.message||{})
+  return String(
+    m.conversation||
+    m.extendedTextMessage?.text||
+    m.imageMessage?.caption||
+    m.videoMessage?.caption||
+    m.documentMessage?.caption||
+    m.buttonsMessage?.contentText||
+    m.templateButtonReplyMessage?.selectedDisplayText||
+    ''
+  ).trim()
+}
 function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms))}
-function actorFromMessage(msg:WAMessage){return phoneCandidatesFromMessageKey(msg.key).map(findAdminByPhone).find(Boolean)||null}
+
+function senderJidsFromMessage(msg:WAMessage){
+  const key:any=msg.key||{}
+  return uniqueJids([key.participantPn,key.senderPn,key.participant,key.participantLid,key.senderLid])
+}
+
+function actorFromKnownPhones(phones:string[]){
+  for(const phone of phones){
+    const actor=findAdminByPhone(normalizePhone(phone))
+    if(actor)return actor
+  }
+  return null
+}
+
+async function resolveScamGuardActor(sock:WASocket,msg:WAMessage,jid:string){
+  const direct=actorFromKnownPhones(phoneCandidatesFromMessageKey(msg.key))
+  if(direct)return direct
+
+  const senderJids=senderJidsFromMessage(msg)
+  if(senderJids.length){
+    try{
+      const member:any=await Member.findOne({$or:[{userJid:{$in:senderJids}},{alternateJids:{$in:senderJids}}]}).lean()
+      if(member?.phoneNumberNormalized){
+        const actor=findAdminByPhone(normalizePhone(String(member.phoneNumberNormalized)))
+        if(actor)return actor
+      }
+    }catch(error){
+      logger.debug({err:error,jid},'Scam Guard could not resolve reporter through member cache')
+    }
+  }
+
+  if(jid.endsWith('@g.us')&&senderJids.length){
+    try{
+      const meta:any=await sock.groupMetadata(jid)
+      const participant=meta?.participants?.find((row:any)=>participantJids(row).some(candidate=>senderJids.some(sender=>candidate===sender||sameUserJid(candidate,sender))))
+      if(participant){
+        const phoneJids=participantJids(participant).filter(isPhoneJid)
+        const actor=actorFromKnownPhones(phoneJids.map(phoneFromJid))
+        if(actor){
+          try{await upsertMember(participant.jid||participant.id||participant.lid,undefined,participantJids(participant))}catch{}
+          return actor
+        }
+      }
+    }catch(error){
+      logger.warn({err:error,jid,senderJids},'Scam Guard could not resolve reporter through group metadata')
+    }
+  }
+
+  return null
+}
 function canReport(actor:ScamGuardActor|null):actor is ScamGuardActor{return Boolean(actor&&(actor.role==='OWNER'||actor.role==='ADMIN'))}
 function protectedPhone(phone:string){return env.panelUsers.some(user=>user.phone===phone)||phone===normalizePhone(env.WHATSAPP_NUMBER)}
 
@@ -190,21 +262,29 @@ export async function handleScamGuardParticipantAdd(sock:WASocket,group:any,user
 
 export async function handleScamGuardMessage(sock:WASocket,msg:WAMessage){
   const jid=msg.key.remoteJid;if(!jid)return false
-  const text=messageText(msg);if(!text)return false
-  const actor=actorFromMessage(msg)
+  const text=scamGuardMessageText(msg);if(!text)return false
   if(/^\/scam-source\b/i.test(text)){
-    if(actor?.role!=='OWNER')return false
+    const actor=await resolveScamGuardActor(sock,msg,jid)
+    if(actor?.role!=='OWNER'){
+      logger.warn({jid,messageId:msg.key.id,senderJids:senderJidsFromMessage(msg)},'Scam Guard source command rejected because OWNER identity could not be resolved')
+      return false
+    }
     await trustScamSourceJid(jid,actor.username)
     await sock.sendMessage(jid,{text:'🛡️ SCAM GUARD — Esta conversación quedó registrada como fuente confiable de reportes.'})
     await audit({actor:actor.username,actorRole:actor.role,action:'SCAM_GUARD_SOURCE_ADDED',source:'WHATSAPP',result:'SUCCESS',metadata:{sourceJid:jid}})
     return true
   }
   const cfg=await getHotScamGuardConfig();if(!cfg.enabled||!(cfg.sourceJids||[]).includes(jid))return false
-  if(!canReport(actor)){
-    await audit({actor:'UNKNOWN',action:'SCAM_GUARD_UNAUTHORIZED_REPORT',source:'WHATSAPP',result:'FAILED',reason:'Mensaje de reporte desde fuente confiable pero autor no es OWNER/ADMIN',metadata:{sourceJid:jid,messageId:msg.key.id}})
-    return false
-  }
   const parsed=parseScamReport(text);if(!parsed)return false
+  const actor=await resolveScamGuardActor(sock,msg,jid)
+  if(!canReport(actor)){
+    const senderJids=senderJidsFromMessage(msg)
+    await audit({actor:'UNKNOWN',action:'SCAM_GUARD_UNAUTHORIZED_REPORT',source:'WHATSAPP',result:'FAILED',reason:'Mensaje de reporte desde fuente confiable pero autor no es OWNER/ADMIN',metadata:{sourceJid:jid,messageId:msg.key.id,senderJids,parsedPhones:parsed.phones}})
+    logger.warn({jid,messageId:msg.key.id,senderJids,parsedPhones:parsed.phones},'Scam Guard report ignored because reporter identity could not be resolved as OWNER/ADMIN')
+    try{await sock.sendMessage(jid,{text:'⚠️ *SCAM GUARD* detectó el reporte, pero no pudo validar al remitente como OWNER/ADMIN de CHRONOS. Revisa que ese número esté registrado en CHRONOS_PANEL_USERS.'})}catch{}
+    return true
+  }
+  logger.info({jid,messageId:msg.key.id,actor:actor.username,phones:parsed.phones},'Scam Guard trusted report detected')
   const accepted:string[]=[],rejected:string[]=[]
   for(const phone of parsed.phones){
     try{const entry=await registerScamReport({phone,reason:parsed.reason,actor,source:'WHATSAPP',sourceJid:jid,sourceMessageId:msg.key.id||undefined,sock});accepted.push(String(entry.phoneNumberNormalized))}
