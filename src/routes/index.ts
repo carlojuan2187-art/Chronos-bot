@@ -15,7 +15,7 @@ import { AuditLog } from '../audit/audit.model.js'
 import { updateGroupSettings,getGroup } from '../groups/group.service.js'
 import { resolveGroupAndMember,warn,kick,ban,globalBan,revokeBan } from '../moderation/moderation.service.js'
 import { whatsappPublicState } from '../whatsapp/state.js'
-import { reconnectWhatsApp } from '../whatsapp/whatsapp.client.js'
+import { getWhatsAppSocket,reconnectWhatsApp } from '../whatsapp/whatsapp.client.js'
 import { syncGroups } from '../whatsapp/whatsapp.sync.js'
 import { Announcement } from '../announcements/announcement.model.js'
 import { sendAnnouncement } from '../announcements/announcement.service.js'
@@ -99,7 +99,7 @@ apiRouter.get('/scam-guard/config',authorize('scamGuard.read'),async(_req,res)=>
 apiRouter.patch('/scam-guard/config',authorize('scamGuard.configure'),async(req,res)=>{const b=z.object({enabled:z.boolean().optional(),sourceJids:z.array(z.string().min(4)).optional(),publicAlertEnabled:z.boolean().optional(),scanExistingGroups:z.boolean().optional(),actionDelayMs:z.number().int().min(250).max(10000).optional()}).parse(req.body);res.json({success:true,data:await updateScamGuardConfig(b,req.admin!.username)})})
 apiRouter.get('/scam-guard/entries',authorize('scamGuard.read'),async(_req,res)=>res.json({success:true,data:await listScamEntries()}))
 apiRouter.get('/scam-guard/reports',authorize('scamGuard.read'),async(req,res)=>res.json({success:true,data:await listScamReports(Number(req.query.limit||200))}))
-apiRouter.post('/scam-guard/report',authorize('scamGuard.manage'),async(req,res)=>{const b=z.object({phone:z.string().min(8),reason:z.string().max(500).optional()}).parse(req.body);res.json({success:true,data:await registerScamReport({phone:b.phone,reason:b.reason,actor:req.admin!,source:'PANEL'})})})
+apiRouter.post('/scam-guard/report',authorize('scamGuard.manage'),async(req,res)=>{const b=z.object({phone:z.string().min(8),reason:z.string().max(500).optional()}).parse(req.body);res.json({success:true,data:await registerScamReport({phone:b.phone,reason:b.reason,actor:req.admin!,source:'PANEL',sock:getWhatsAppSocket()})})})
 apiRouter.post('/scam-guard/entries/:id/revoke',authorize('scamGuard.revoke'),async(req,res)=>res.json({success:true,data:await revokeScamEntry(routeParam(req,'id'),req.admin!)}))
 
 apiRouter.get('/whitelist',authorize('whitelist.manage'),async(_req,res)=>res.json({success:true,data:await Whitelist.find().lean()}))
