@@ -4,6 +4,8 @@ import { ScamEntry } from './scam-entry.model.js'
 import { ScamReport } from './scam-report.model.js'
 import { parseScamReport,maskPhone } from './scam-guard.parser.js'
 import { env,type PanelUser } from '../config/env.js'
+
+type ScamGuardActor=Pick<PanelUser,'username'|'phone'|'role'>
 import { findAdminByPhone } from '../auth/auth.service.js'
 import { phoneCandidatesFromMessageKey,normalizePhone,participantJids,phoneFromJid,isPhoneJid,sameUserJid,uniqueJids } from '../utils/jid.js'
 import { upsertMember,setMembership } from '../members/member.service.js'
@@ -25,7 +27,7 @@ const HOT_CONFIG_TTL_MS=30_000
 function messageText(msg:WAMessage){const m:any=msg.message||{};return String(m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||'').trim()}
 function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms))}
 function actorFromMessage(msg:WAMessage){return phoneCandidatesFromMessageKey(msg.key).map(findAdminByPhone).find(Boolean)||null}
-function canReport(actor:PanelUser|null):actor is PanelUser{return Boolean(actor&&(actor.role==='OWNER'||actor.role==='ADMIN'))}
+function canReport(actor:ScamGuardActor|null):actor is ScamGuardActor{return Boolean(actor&&(actor.role==='OWNER'||actor.role==='ADMIN'))}
 function protectedPhone(phone:string){return env.panelUsers.some(user=>user.phone===phone)||phone===normalizePhone(env.WHATSAPP_NUMBER)}
 
 export async function getScamGuardConfig(){
@@ -65,7 +67,7 @@ async function ensureGlobalBan(phone:string,member:any,reason:string,actor:strin
   return{ban,ownsBan:true}
 }
 
-export async function registerScamReport(input:{phone:string;reason?:string;actor:PanelUser;source:'WHATSAPP'|'PANEL';sourceJid?:string;sourceMessageId?:string}){
+export async function registerScamReport(input:{phone:string;reason?:string;actor:ScamGuardActor;source:'WHATSAPP'|'PANEL';sourceJid?:string;sourceMessageId?:string}){
   const phone=normalizePhone(input.phone)
   if(phone.length<8||phone.length>15)throw new AppError('VALIDATION_ERROR','Número reportado inválido',400)
   if(protectedPhone(phone))throw new AppError('PROTECTED_ADMIN','No se puede añadir a Scam Guard el número del bot ni un administrador configurado de CHRONOS',409)
@@ -219,7 +221,7 @@ export async function handleScamGuardMessage(sock:WASocket,msg:WAMessage){
 export async function listScamEntries(){return ScamEntry.find().sort({status:1,lastReportedAt:-1}).lean()}
 export async function listScamReports(limit=200){return ScamReport.find().sort({createdAt:-1}).limit(Math.min(Math.max(limit,1),500)).lean()}
 
-export async function revokeScamEntry(entryId:string,actor:PanelUser){
+export async function revokeScamEntry(entryId:string,actor:ScamGuardActor){
   if(actor.role!=='OWNER')throw new AppError('FORBIDDEN','Solo OWNER puede retirar un bloqueo permanente de Scam Guard',403)
   const entry=await ScamEntry.findById(entryId);if(!entry)throw new AppError('NOT_FOUND','Registro Scam Guard no encontrado',404)
   entry.status='REVOKED';entry.revokedAt=new Date();entry.revokedBy=actor.username;entry.updatedAt=new Date();await entry.save()
