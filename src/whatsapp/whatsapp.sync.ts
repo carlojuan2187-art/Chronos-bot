@@ -14,5 +14,5 @@ export async function syncGroups(){
       const member=await upsertMemberFromParticipant(p);await setMembership(member._id,group._id,'ACTIVE');members++
     }
   }
-  await SystemState.findByIdAndUpdate('singleton',{$set:{lastFullSyncAt:new Date(),updatedAt:new Date()}},{upsert:true});logger.info({groups:n,members},'Groups synchronized');queueScamGuardReconciliation();return {synced:n,members}
+  await SystemState.findByIdAndUpdate('singleton',{$set:{lastFullSyncAt:new Date(),updatedAt:new Date()}},{upsert:true});logger.info({groups:n,members},'Groups synchronized');queueScamGuardReconciliation(sock);return {synced:n,members}
 }
