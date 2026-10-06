@@ -68,3 +68,7 @@ Anti-Bot agregado de forma aislada al pipeline de moderación. Pairing/socket/li
 
 ## v2.1.3
 Scam Guard: corrección de captura desde grupo privado cuando WhatsApp entrega identidad LID; soporte adicional para mensajes reenviados/envueltos y diagnóstico explícito de reportero no reconocido.
+
+## v2.1.4
+- Scam Guard join enforcement hardened against the participant-add/groupMetadata propagation race.
+- PN/LID resolution on joins improved; direct participant-add JID can be used for immediate removal after blacklist match.
