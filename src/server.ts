@@ -1,3 +1,4 @@
+import { buildInfo } from './system/build-info.js'
 import { createApp } from './app.js'
 import { env } from './config/env.js'
 import { connectDatabase, disconnectDatabase } from './config/database.js'
@@ -8,6 +9,7 @@ import { logger } from './utils/logger.js'
 import { startGroupScheduleWorker, stopGroupScheduleWorker } from './scheduler/group-schedule.service.js'
 
 async function main() {
+  logger.info(`CHRONOS runtime version=${buildInfo.version} build=${buildInfo.build} scamGuard=phone-alias-v2`)
   const app = createApp()
   const server = app.listen(env.PORT, () => logger.info({ port: env.PORT }, 'CHRONOS backend listening'))
 
