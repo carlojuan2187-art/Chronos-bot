@@ -1,7 +1,7 @@
 import type { WASocket } from '@whiskeysockets/baileys'
 
 export function isGroupRateLimit(error:any):boolean {
-  return [error?.data,error?.status,error?.statusCode,error?.output?.statusCode].some(value=>Number(value)===429)
+  return [error?.data?.statusCode,error?.data,error?.status,error?.statusCode,error?.output?.statusCode].some(value=>Number(value)===429)
     || /rate.over.limit|\b429\b/i.test(String(error?.message||''))
 }
 
@@ -20,6 +20,7 @@ export function groupRequest<T>(sock:WASocket,operation:()=>Promise<T>,spacingMs
   const state=stateFor(sock)
   const run=state.tail.then(async()=>{
     const assertAvailable=()=>{
+      if(sock.ws?.isOpen===false)throw new Error('WHATSAPP_NOT_CONNECTED')
       if(groupRequestBlocked(sock))throw Object.assign(new Error('WHATSAPP_GROUP_RATE_LIMIT_COOLDOWN'),{statusCode:429,retryAt:state.blockedUntil})
     }
     assertAvailable()
