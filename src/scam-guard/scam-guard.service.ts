@@ -98,7 +98,7 @@ async function resolveScamGuardActor(sock:WASocket,msg:WAMessage,jid:string){
 
   return null
 }
-function canReport(actor:ScamGuardActor|null):actor is ScamGuardActor{return Boolean(actor&&(actor.role==='OWNER'||actor.role==='ADMIN'))}
+function canReport(actor:ScamGuardActor|null){return Boolean(actor&&(actor.role==='OWNER'||actor.role==='ADMIN'))}
 function protectedPhone(phone:string){return env.panelUsers.some(user=>user.phone===phone)||phone===normalizePhone(env.WHATSAPP_NUMBER)}
 
 export async function getScamGuardConfig(){
