@@ -5,7 +5,13 @@ afterEach(()=>vi.useRealTimers())
 describe('WhatsApp group request budget',()=>{
   it('recognizes the exact Boom error shape from the screenshot',()=>{
     expect(isGroupRateLimit({message:'rate-over-limit',data:429,output:{statusCode:500}})).toBe(true)
+    expect(isGroupRateLimit({data:{statusCode:429}})).toBe(true)
     expect(isGroupRateLimit({statusCode:403})).toBe(false)
+  })
+  it('never issues a group request through a disconnected socket',async()=>{
+    const operation=vi.fn()
+    await expect(groupRequest({ws:{isOpen:false}} as any,operation)).rejects.toThrow('WHATSAPP_NOT_CONNECTED')
+    expect(operation).not.toHaveBeenCalled()
   })
   it('serializes operations and spaces them',async()=>{
     vi.useFakeTimers()
