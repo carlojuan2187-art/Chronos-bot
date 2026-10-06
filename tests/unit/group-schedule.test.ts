@@ -1,0 +1,33 @@
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest'
+const m=vi.hoisted(()=>({sock:null as any,find:vi.fn(),update:vi.fn()}))
+vi.mock('../../src/whatsapp/whatsapp.client.js',()=>({getWhatsAppSocket:()=>m.sock}))
+vi.mock('../../src/groups/group.model.js',()=>({Group:{find:m.find,updateOne:m.update}}))
+vi.mock('../../src/utils/logger.js',()=>({logger:{warn:vi.fn(),error:vi.fn()}}))
+beforeEach(()=>{vi.resetModules();vi.resetAllMocks();vi.useFakeTimers();m.sock={groupMetadata:vi.fn(),groupSettingUpdate:vi.fn(),sendMessage:vi.fn()}})
+afterEach(()=>{vi.clearAllTimers();vi.useRealTimers()})
+describe('Group schedule worker',()=>{
+  it('observes an already-open group without rewriting its setting',async()=>{
+    m.find.mockResolvedValue([{_id:'g',groupJid:'g@g.us',botIsAdmin:true,schedule:{mode:'OPEN'}}])
+    m.sock.groupMetadata.mockResolvedValue({announce:false})
+    const {tickGroupSchedules}=await import('../../src/scheduler/group-schedule.service.js')
+    await tickGroupSchedules()
+    expect(m.sock.groupSettingUpdate).not.toHaveBeenCalled()
+    expect(m.update).toHaveBeenCalledWith({_id:'g'},{$set:{'schedule.lastAppliedMode':'OPEN',updatedAt:expect.any(Date)}})
+  })
+  it('does not overlap ticks or continue writing other groups after rate limiting',async()=>{
+    m.find.mockResolvedValue(['a','b'].map(id=>({_id:id,groupJid:`${id}@g.us`,botIsAdmin:true,schedule:{mode:'OPEN',lastAppliedMode:'CLOSED'}})))
+    m.sock.groupSettingUpdate.mockRejectedValue({message:'rate-over-limit',data:429,output:{statusCode:500}})
+    const {tickGroupSchedules}=await import('../../src/scheduler/group-schedule.service.js')
+    const first=tickGroupSchedules(),second=tickGroupSchedules()
+    expect(first).toBe(second)
+    await first
+    await tickGroupSchedules()
+    expect(m.sock.groupSettingUpdate).toHaveBeenCalledTimes(1)
+    expect(m.update).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(60_000)
+    m.sock.groupSettingUpdate.mockResolvedValue(undefined)
+    const recovery=tickGroupSchedules()
+    await vi.runAllTimersAsync();await recovery
+    expect(m.sock.groupSettingUpdate).toHaveBeenCalledTimes(3)
+  })
+})
