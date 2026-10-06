@@ -83,8 +83,8 @@ Endpoints:
 - `POST /api/v1/scam-guard/entries/:id/revoke`
 
 
-### Scam Guard v2.1.3
+### Scam Guard v2.1.4
 Las fuentes privadas de reportes resuelven OWNER/ADMIN incluso cuando WhatsApp entrega LID en lugar del PN directo. Los reportes reenviados y números enviados como texto se procesan automáticamente.
 
-### Scam Guard v2.1.4 join enforcement
-Blacklisted participants are checked directly from the WhatsApp participant-add event, with PN/LID resolution and short metadata retries to avoid missing freshly added users.
+## v2.1.5
+Scam Guard refuerza la expulsión al entrar: resuelve identidades LID/PN con reintentos y suprime la bienvenida para números confirmados en blacklist.
