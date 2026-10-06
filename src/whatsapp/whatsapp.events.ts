@@ -6,15 +6,20 @@ import { moderateMessage } from '../moderation/moderation.engine.js'
 import { Group } from '../groups/group.model.js'
 import { upsertMember,setMembership } from '../members/member.service.js'
 import { Ban } from '../moderation/ban.model.js'
-import { syncGroups } from './whatsapp.sync.js'
+import { applyGroupUpdates } from './whatsapp.sync.js'
 import { handleScamGuardMessage,handleScamGuardParticipantAdd } from '../scam-guard/scam-guard.service.js'
 
 export function registerWhatsAppEvents(sock:WASocket){
   sock.ev.on('messages.upsert',async({messages})=>{for(const msg of messages){try{
-    if(!msg.message||msg.key.fromMe||!msg.key.id)continue
+    if(!msg.message||!msg.key.id)continue
     const inserted=await ProcessedMessage.updateOne({messageId:msg.key.id},{$setOnInsert:{messageId:msg.key.id,groupJid:msg.key.remoteJid,processedAt:new Date()}},{upsert:true})
     if(inserted.upsertedCount===0)continue
+    // Scam Guard is evaluated before the generic fromMe filter because a
+    // trusted reporting source may be operated from the same WhatsApp account
+    // that is linked to CHRONOS. Other moderation/commands still ignore
+    // messages sent by the bot account itself.
     if(await handleScamGuardMessage(sock,msg))continue
+    if(msg.key.fromMe)continue
     if(await handleCommand(sock,msg))continue
     await moderateMessage(sock,msg)
   }catch(e){logger.error({err:e},'Message processing failed')}}})
@@ -42,5 +47,5 @@ export function registerWhatsAppEvents(sock:WASocket){
     }
   }catch(e){logger.error({err:e},'Participant update failed')}})
 
-  sock.ev.on('groups.update',async()=>{try{await syncGroups()}catch(e){logger.warn({err:e},'Group incremental sync failed')}})
+  sock.ev.on('groups.update',async(updates)=>{try{await applyGroupUpdates(updates)}catch(e){logger.warn({err:e},'Group incremental sync failed')}})
 }
