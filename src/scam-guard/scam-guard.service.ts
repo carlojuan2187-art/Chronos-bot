@@ -20,6 +20,7 @@ import { GroupMembership } from '../members/membership.model.js'
 const DEFAULT_CONFIG={enabled:true,sourceJids:[] as string[],publicAlertEnabled:true,scanExistingGroups:true,actionDelayMs:900}
 let sweepChain:Promise<void>=Promise.resolve()
 let reconciliationQueued=false
+const pendingGroupEnforcement=new Set<string>()
 let hotConfig:any=null
 let hotConfigAt=0
 const HOT_CONFIG_TTL_MS=30_000
@@ -166,22 +167,51 @@ export async function registerScamReport(input:{phone:string;reason?:string;acto
   return entry
 }
 
-function participantPhone(participant:any){
-  for(const jid of participantJids(participant)){if(isPhoneJid(jid)){const phone=phoneFromJid(jid);if(phone)return phone}}
-  return ''
+function participantPhones(participant:any){
+  const raw=uniqueJids([
+    ...participantJids(participant),
+    participant?.phoneNumber,participant?.phone_number,participant?.pn,participant?.participantPn,participant?.participantAlt,
+  ])
+  const phones:string[]=[]
+  for(const value of raw){
+    const phone=isPhoneJid(value)?phoneFromJid(value):(!value.includes('@')?normalizePhone(value):'')
+    if(phone&&phone.length>=8&&phone.length<=15&&!phones.includes(phone))phones.push(phone)
+  }
+  return phones
+}
+function participantPhone(participant:any){return participantPhones(participant)[0]||''}
+
+async function withTimeout<T>(promise:Promise<T>,ms:number,label:string):Promise<T>{
+  let timer:NodeJS.Timeout|undefined
+  try{
+    return await Promise.race([promise,new Promise<T>((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label}_TIMEOUT`)),ms)})])
+  }finally{if(timer)clearTimeout(timer)}
+}
+
+async function fetchGroupMetadataResilient(sock:WASocket,groupJid:string){
+  try{return await withTimeout(sock.groupMetadata(groupJid),5000,'GROUP_METADATA')}
+  catch(firstError){
+    logger.warn({err:firstError,groupJid},'Scam Guard groupMetadata failed; trying full participating-groups snapshot')
+    try{
+      const all:any=await withTimeout(sock.groupFetchAllParticipating(),10000,'GROUP_FETCH_ALL')
+      const meta=all?.[groupJid]
+      if(meta)return meta
+    }catch(secondError){logger.warn({err:secondError,groupJid},'Scam Guard participating-groups fallback failed')}
+    throw firstError
+  }
 }
 
 async function resolveJoinParticipant(sock:WASocket,groupJid:string,userJid:string){
-  const delays=[0,250,750,1500,2500]
+  const delays=[0,500,1500]
   let lastMeta:any=null
   for(const delay of delays){
     if(delay)await sleep(delay)
     try{
-      const meta:any=await sock.groupMetadata(groupJid);lastMeta=meta
+      const meta:any=await fetchGroupMetadataResilient(sock,groupJid);lastMeta=meta
       const participant=meta?.participants?.find((p:any)=>participantJids(p).some(id=>id===userJid||sameUserJid(id,userJid)))
       if(participant)return{meta,participant}
     }catch(error){
-      logger.debug({err:error,groupJid,userJid,delay},'Scam Guard waiting for joined participant metadata')
+      logger.warn({err:error,groupJid,userJid,delay},'Scam Guard could not refresh joined participant metadata')
     }
   }
   return{meta:lastMeta,participant:null}
@@ -192,10 +222,12 @@ async function phoneFromJoinIdentity(sock:WASocket,groupJid:string,userJid:strin
   try{
     const cached:any=await Member.findOne({$or:[{userJid},{alternateJids:userJid}]}).lean()
     if(cached?.phoneNumberNormalized)return{phone:normalizePhone(String(cached.phoneNumberNormalized)),meta:null,participant:null,member:cached}
-  }catch(error){logger.debug({err:error,groupJid,userJid},'Scam Guard join cache lookup failed')}
+  }catch(error){logger.warn({err:error,groupJid,userJid},'Scam Guard join cache lookup failed')}
   const resolved=await resolveJoinParticipant(sock,groupJid,userJid)
   if(!resolved.participant)return{phone:'',meta:resolved.meta,participant:null,member:null}
-  const member=await upsertMember(resolved.participant.jid||resolved.participant.id||resolved.participant.lid||userJid,undefined,participantJids(resolved.participant))
+  const aliases=uniqueJids([userJid,...participantJids(resolved.participant)])
+  const canonical=resolved.participant.jid||resolved.participant.id||resolved.participant.lid||userJid
+  const member=await upsertMember(canonical,undefined,aliases)
   const phone=participantPhone(resolved.participant)||normalizePhone(String((member as any).phoneNumberNormalized||''))
   return{phone,meta:resolved.meta,participant:resolved.participant,member}
 }
@@ -223,8 +255,14 @@ async function removeEntryFromGroup(sock:WASocket,entry:any,group:any,participan
   if(!participant)return false
   const actualPhone=participantPhone(participant)
   if(actualPhone&&actualPhone!==phone)return false
-  const actionJid=participant.id||participant.lid||participant.jid||participantHint
+  const participantIds=participantJids(participant)
+  const lidJid=participantIds.find((jid:string)=>jid.endsWith('@lid'))
+  const phoneJid=participantIds.find(isPhoneJid)
+  const actionJid=meta?.addressingMode==='lid'
+    ? (lidJid||(participantHint?.endsWith('@lid')?participantHint:undefined)||participant.id||participant.lid||participant.jid)
+    : (phoneJid||(participantHint&&isPhoneJid(participantHint)?participantHint:undefined)||participant.jid||participant.id||participant.lid||participantHint)
   if(!actionJid)return false
+  logger.warn({groupJid:group.groupJid,phone,participantHint,addressingMode:meta?.addressingMode,actionJid,participantIds},'Scam Guard issuing permanent-ban removal')
   const result=await sock.groupParticipantsUpdate(group.groupJid,[actionJid],'remove')
   const rejected=(result||[]).find((row:any)=>row?.status&&String(row.status)!=='200')
   if(rejected)throw new Error(`WhatsApp rechazó la expulsión Scam Guard (status ${String(rejected.status)})`)
@@ -234,6 +272,42 @@ async function removeEntryFromGroup(sock:WASocket,entry:any,group:any,participan
   logger.info({groupJid:group.groupJid,phone,actionJid},'Scam Guard removed blacklisted participant')
   await publicScamAlert(sock,group,entry)
   return true
+}
+
+async function enforceGroupBlacklistOnce(sock:WASocket,group:any){
+  const cfg=await getHotScamGuardConfig();if(!cfg.enabled)return 0
+  const entries=await ScamEntry.find({status:'ACTIVE'}).lean()
+  if(!entries.length)return 0
+  const byPhone=new Map<string,any>()
+  for(const entry of entries as any[])byPhone.set(String(entry.phoneNumberNormalized),entry)
+  const meta:any=await fetchGroupMetadataResilient(sock,group.groupJid)
+  let removed=0
+  for(const participant of meta?.participants||[]){
+    const phones=participantPhones(participant)
+    const entry=phones.map(phone=>byPhone.get(phone)).find(Boolean) as any
+    if(!entry)continue
+    logger.warn({groupJid:group.groupJid,phones,entryId:entry._id,participantIds:participantJids(participant)},'Scam Guard group scan matched blacklisted participant')
+    try{if(await removeEntryFromGroup(sock,entry,group,undefined,meta,participant))removed++}
+    catch(error){logger.error({err:error,groupJid:group.groupJid,phones,entryId:entry._id},'Scam Guard group scan removal failed')}
+  }
+  return removed
+}
+
+export function queueGroupScamGuardEnforcement(sock:WASocket,group:any){
+  const key=String(group.groupJid)
+  if(pendingGroupEnforcement.has(key))return
+  pendingGroupEnforcement.add(key)
+  sweepChain=sweepChain.then(async()=>{
+    const delays=[1000,3000,7000,15000]
+    for(const delay of delays){
+      await sleep(delay)
+      try{
+        const removed=await enforceGroupBlacklistOnce(sock,group)
+        logger.info({groupJid:key,removed,delay},'Scam Guard deferred group enforcement completed')
+        if(removed>0)break
+      }catch(error){logger.warn({err:error,groupJid:key,delay},'Scam Guard deferred group enforcement attempt failed')}
+    }
+  }).catch(error=>logger.error({err:error,groupJid:key},'Scam Guard deferred group enforcement failed')).finally(()=>pendingGroupEnforcement.delete(key))
 }
 
 async function sweepEntry(entryId:string,sock:WASocket){
@@ -280,27 +354,27 @@ export async function handleScamGuardParticipantAdd(sock:WASocket,group:any,user
   const cfg=await getHotScamGuardConfig();if(!cfg.enabled)return false
   if(!(await ScamEntry.exists({status:'ACTIVE'})))return false
   try{
-    logger.info({groupJid:group.groupJid,userJid},'Scam Guard evaluating joined participant')
+    logger.info(`Scam Guard evaluating joined participant group=${group.groupJid} user=${userJid}`)
     const identity=await phoneFromJoinIdentity(sock,group.groupJid,userJid)
     const phone=normalizePhone(identity.phone||'')
     if(!phone){
-      logger.warn({groupJid:group.groupJid,userJid},'Scam Guard could not resolve joined participant phone after metadata retries')
-      return false
+      logger.error(`Scam Guard could not resolve joined participant phone; welcome suppressed group=${group.groupJid} user=${userJid}`)
+      queueGroupScamGuardEnforcement(sock,group)
+      return true
     }
+    logger.info(`Scam Guard resolved join identity group=${group.groupJid} user=${userJid} phone=${phone}`)
     const entry=await ScamEntry.findOne({phoneNumberNormalized:phone,status:'ACTIVE'})
     if(!entry){
-      // Keep the LID↔PN mapping warm for the normal ban engine as well.
-      if(identity.participant&&!identity.member)await upsertMember(identity.participant.jid||identity.participant.id||userJid,undefined,participantJids(identity.participant))
-      logger.debug({groupJid:group.groupJid,userJid,phone},'Scam Guard join is not blacklisted')
+      logger.info(`Scam Guard join cleared group=${group.groupJid} user=${userJid} phone=${phone}`)
       return false
     }
     const member=identity.member||await upsertMember(identity.participant?.jid||`${phone}@s.whatsapp.net`,undefined,uniqueJids([userJid,...participantJids(identity.participant||{})]))
     entry.memberId=member._id;await entry.save()
     await setMembership(member._id,group._id,'ACTIVE')
-    logger.warn({groupJid:group.groupJid,userJid,phone,entryId:entry._id},'Scam Guard matched blacklisted participant on join')
+    logger.warn(`Scam Guard MATCH blacklisted join group=${group.groupJid} user=${userJid} phone=${phone} entry=${String(entry._id)}`)
 
     let removed=false
-    const retryDelays=[0,400,1200,2500]
+    const retryDelays=[0,500,1500]
     let meta=identity.meta,participant=identity.participant
     for(const delay of retryDelays){
       if(delay)await sleep(delay)
@@ -308,8 +382,6 @@ export async function handleScamGuardParticipantAdd(sock:WASocket,group:any,user
         if(!participant){const resolved=await resolveJoinParticipant(sock,group.groupJid,userJid);meta=resolved.meta;participant=resolved.participant}
         removed=await removeEntryFromGroup(sock,entry,group,userJid,meta,participant)
         if(removed)break
-        // Refresh metadata on the next attempt; WhatsApp often emits the add
-        // event slightly before the new participant is visible in metadata.
         meta=null;participant=null
       }catch(error:any){
         logger.warn({err:error,groupJid:group.groupJid,userJid,phone,delay},'Scam Guard immediate join removal attempt failed')
@@ -319,17 +391,15 @@ export async function handleScamGuardParticipantAdd(sock:WASocket,group:any,user
 
     if(!removed){
       await audit({actor:'CHRONOS',action:'SCAM_GUARD_JOIN_ENFORCEMENT_DEFERRED',groupId:group._id,communityId:group.communityId,targetMemberId:entry.memberId,source:'SYSTEM',result:'FAILED',reason:'El número está en blacklist pero WhatsApp todavía no permitió resolver/expulsar al participante',metadata:{userJid,phone,entryId:entry._id}})
-      logger.error({groupJid:group.groupJid,userJid,phone,entryId:entry._id},'Scam Guard blacklisted join could not be removed immediately; welcome suppressed')
-      // The entry is definitely blacklisted. Suppress welcome/normal join flow
-      // even if WhatsApp metadata is temporarily stale, and queue a follow-up
-      // reconciliation instead of treating the member as clean.
-      queueScamGuardReconciliation(sock)
+      logger.error(`Scam Guard blacklisted join not removed immediately; welcome suppressed group=${group.groupJid} user=${userJid} phone=${phone}`)
+      queueGroupScamGuardEnforcement(sock,group)
     }
     return true
   }catch(error:any){
-    logger.error({err:error,groupJid:group.groupJid,userJid},'Scam Guard join enforcement failed')
+    logger.error({err:error,groupJid:group.groupJid,userJid},'Scam Guard join enforcement failed; welcome suppressed')
     await audit({actor:'CHRONOS',action:'SCAM_GUARD_JOIN_ENFORCEMENT_FAILED',groupId:group._id,communityId:group.communityId,source:'SYSTEM',result:'FAILED',reason:String(error?.message||error),metadata:{userJid}})
-    return false
+    queueGroupScamGuardEnforcement(sock,group)
+    return true
   }
 }
 
