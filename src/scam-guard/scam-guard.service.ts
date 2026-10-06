@@ -7,7 +7,7 @@ import { env,type PanelUser } from '../config/env.js'
 
 type ScamGuardActor=Pick<PanelUser,'username'|'phone'|'role'>
 import { findAdminByPhone } from '../auth/auth.service.js'
-import { phoneCandidatesFromMessageKey,normalizePhone,participantJids,phoneFromJid,isPhoneJid,sameUserJid,uniqueJids } from '../utils/jid.js'
+import { phoneCandidatesFromMessageKey,normalizePhone,participantJids,phoneFromJid,isPhoneJid,isLidJid,sameUserJid,uniqueJids } from '../utils/jid.js'
 import { upsertMember,setMembership } from '../members/member.service.js'
 import { Member } from '../members/member.model.js'
 import { Ban } from '../moderation/ban.model.js'
@@ -181,15 +181,28 @@ async function publicScamAlert(sock:WASocket,group:any,entry:any){
   try{await sock.sendMessage(group.groupJid,{text})}catch(error){logger.warn({err:error,groupJid:group.groupJid},'Scam Guard public alert failed')}
 }
 
-async function removeEntryFromGroup(sock:WASocket,entry:any,group:any,participantHint?:string){
+async function removeEntryFromGroup(sock:WASocket,entry:any,group:any,participantHint?:string,allowEventHint=false){
   const meta=await sock.groupMetadata(group.groupJid)
-  if(!botIsAdmin(meta,sock))return false
+  if(!botIsAdmin(meta,sock)){
+    logger.warn({groupJid:group.groupJid,phone:entry.phoneNumberNormalized},'Scam Guard cannot remove reported user because CHRONOS is not a WhatsApp admin in this group')
+    return false
+  }
   const phone=String(entry.phoneNumberNormalized)
   const participant=meta.participants?.find((p:any)=>participantPhone(p)===phone||(participantHint&&participantJids(p).some(id=>id===participantHint||sameUserJid(id,participantHint))))
-  if(!participant)return false
-  const actualPhone=participantPhone(participant)
-  if(actualPhone&&actualPhone!==phone)return false
-  const actionJid=participant.id||participant.jid||participant.lid||participantHint
+  let actionJid:string|undefined
+  if(participant){
+    const actualPhone=participantPhone(participant)
+    if(actualPhone&&actualPhone!==phone)return false
+    actionJid=participant.id||participant.jid||participant.lid||participantHint
+  }else if(allowEventHint&&participantHint){
+    // On a fresh participant-add event WhatsApp may emit the join before a
+    // subsequent groupMetadata() query contains the new member. The event JID
+    // is authoritative for the just-added participant, so it is safe to use it
+    // after the blacklist identity has already been resolved.
+    const hintPhone=isPhoneJid(participantHint)?phoneFromJid(participantHint):''
+    if(hintPhone&&hintPhone!==phone)return false
+    actionJid=participantHint
+  }else return false
   if(!actionJid)return false
   const result=await sock.groupParticipantsUpdate(group.groupJid,[actionJid],'remove')
   const rejected=(result||[]).find((row:any)=>row?.status&&String(row.status)!=='200')
@@ -245,14 +258,56 @@ export async function handleScamGuardParticipantAdd(sock:WASocket,group:any,user
   const cfg=await getHotScamGuardConfig();if(!cfg.enabled)return false
   if(!(await ScamEntry.exists({status:'ACTIVE'})))return false
   try{
-    const meta=await sock.groupMetadata(group.groupJid)
-    const participant=meta.participants?.find((p:any)=>participantJids(p).some(id=>id===userJid||sameUserJid(id,userJid)))
-    if(!participant)return false
-    const phone=participantPhone(participant)||(isPhoneJid(userJid)?phoneFromJid(userJid):'');if(!phone)return false
-    const entry=await ScamEntry.findOne({phoneNumberNormalized:phone,status:'ACTIVE'});if(!entry)return false
-    const member=await upsertMember(participant.jid||participant.id||userJid,undefined,participantJids(participant));entry.memberId=member._id;await entry.save()
+    let phone=isPhoneJid(userJid)?phoneFromJid(userJid):''
+    let participant:any=null
+
+    // Prefer the identity carried by the participant-add event itself. This
+    // avoids a race where groupMetadata() still reflects the group just before
+    // the new member was inserted.
+    let entry=phone?await ScamEntry.findOne({phoneNumberNormalized:phone,status:'ACTIVE'}):null
+
+    // If WhatsApp emitted only a LID, first try the PN/LID relation already
+    // learned by normal group synchronization.
+    if(!entry&&isLidJid(userJid)){
+      const cached:any=await Member.findOne({$or:[{userJid},{alternateJids:userJid}]}).lean()
+      const cachedPhone=normalizePhone(String(cached?.phoneNumberNormalized||''))
+      if(cachedPhone){
+        const cachedEntry=await ScamEntry.findOne({phoneNumberNormalized:cachedPhone,status:'ACTIVE'})
+        if(cachedEntry){phone=cachedPhone;entry=cachedEntry}
+      }
+    }
+
+    // WhatsApp can emit GROUP_PARTICIPANT_ADD a fraction of a second before a
+    // metadata query exposes the new participant. Retry briefly only when the
+    // event identity was not enough to resolve the blacklist entry.
+    if(!entry){
+      const delays=[0,350,900,1800]
+      for(const delay of delays){
+        if(delay)await sleep(delay)
+        const meta=await sock.groupMetadata(group.groupJid)
+        participant=meta.participants?.find((p:any)=>participantJids(p).some(id=>id===userJid||sameUserJid(id,userJid)))||null
+        if(!participant)continue
+        phone=participantPhone(participant)||(isPhoneJid(userJid)?phoneFromJid(userJid):'')
+        if(!phone)continue
+        entry=await ScamEntry.findOne({phoneNumberNormalized:phone,status:'ACTIVE'})
+        if(entry)break
+      }
+    }
+
+    if(!entry||!phone)return false
+
+    const aliases=participant?participantJids(participant):uniqueJids([userJid,`${phone}@s.whatsapp.net`])
+    const canonical=participant?.jid||participant?.id||`${phone}@s.whatsapp.net`
+    const member=await upsertMember(canonical,undefined,aliases)
+    entry.memberId=member._id;await entry.save()
     await setMembership(member._id,group._id,'ACTIVE')
-    return await removeEntryFromGroup(sock,entry,group,userJid)
+
+    logger.info({groupJid:group.groupJid,userJid,phone,entryId:entry._id},'Scam Guard detected a blacklisted participant joining a protected group')
+    const removed=await removeEntryFromGroup(sock,entry,group,userJid,true)
+    if(!removed){
+      await audit({actor:'CHRONOS',action:'SCAM_GUARD_JOIN_DETECTED_NOT_REMOVED',groupId:group._id,communityId:group.communityId,targetMemberId:member._id,source:'SYSTEM',result:'FAILED',reason:'Reported user detected on join but removal could not be executed. Verify that CHRONOS is a WhatsApp administrator in the group.',metadata:{userJid,phone,entryId:entry._id}})
+    }
+    return removed
   }catch(error:any){
     logger.error({err:error,groupJid:group.groupJid,userJid},'Scam Guard join enforcement failed')
     await audit({actor:'CHRONOS',action:'SCAM_GUARD_JOIN_ENFORCEMENT_FAILED',groupId:group._id,communityId:group.communityId,source:'SYSTEM',result:'FAILED',reason:String(error?.message||error),metadata:{userJid}})
