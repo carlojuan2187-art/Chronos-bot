@@ -107,3 +107,4 @@ tests/unit/permissions.test.ts
 tests/unit/scam-guard.test.ts
 tests/unit/whatsapp-admin.test.ts
 tsconfig.json
+BUILD_FIXES_2.1.7.md

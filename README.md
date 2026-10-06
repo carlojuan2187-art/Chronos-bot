@@ -92,3 +92,6 @@ Scam Guard refuerza la expulsión al entrar: resuelve identidades LID/PN con rei
 
 ## v2.1.6
 Corrección de compilación de Scam Guard sobre v2.1.5. No introduce cambios funcionales adicionales al enforcement de entrada.
+
+### Scam Guard v2.1.7 join enforcement
+If WhatsApp emits a join using an unresolved LID, CHRONOS does not treat the member as clean or send the welcome. It queues a bounded metadata reconciliation and removes any ACTIVE Scam Guard match using the group's PN/LID addressing mode.

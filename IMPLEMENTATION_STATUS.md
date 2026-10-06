@@ -75,3 +75,6 @@ Scam Guard: corrección de captura desde grupo privado cuando WhatsApp entrega i
 ## v2.1.6
 - Build fix: `canReport()` deja de ser un type predicate; evita que TypeScript reduzca `resolvedActor` a `never` en la rama de reporte no autorizado.
 - No cambia la lógica de expulsión v2.1.5 ni pairing/auth/moderación existente.
+
+## v2.1.7
+Scam Guard join enforcement hardened: unresolved LID/PN identity now suppresses welcome and queues group-level blacklist enforcement; removal respects group addressing mode.
