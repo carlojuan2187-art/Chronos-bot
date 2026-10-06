@@ -70,3 +70,8 @@ Anti-Bot agregado de forma aislada al pipeline de moderación. Pairing/socket/li
 Scam Guard: corrección de captura desde grupo privado cuando WhatsApp entrega identidad LID; soporte adicional para mensajes reenviados/envueltos y diagnóstico explícito de reportero no reconocido.
 
 - v2.1.5: corregida la ejecución del ban permanente de Scam Guard durante `group-participants.update`, incluyendo resolución LID↔PN y reintentos de metadata.
+
+
+## v2.1.6
+- Build fix: `canReport()` deja de ser un type predicate; evita que TypeScript reduzca `resolvedActor` a `never` en la rama de reporte no autorizado.
+- No cambia la lógica de expulsión v2.1.5 ni pairing/auth/moderación existente.

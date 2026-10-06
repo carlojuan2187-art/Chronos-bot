@@ -88,3 +88,7 @@ Las fuentes privadas de reportes resuelven OWNER/ADMIN incluso cuando WhatsApp e
 
 ## v2.1.5
 Scam Guard refuerza la expulsión al entrar: resuelve identidades LID/PN con reintentos y suprime la bienvenida para números confirmados en blacklist.
+
+
+## v2.1.6
+Corrección de compilación de Scam Guard sobre v2.1.5. No introduce cambios funcionales adicionales al enforcement de entrada.
